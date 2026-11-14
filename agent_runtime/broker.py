@@ -7,6 +7,9 @@ Determinista, sin LLM. Orden de comprobación en `execute`:
   4. destino: ruta (resolve + symlink + contención + nivel) o host (allowlist) y scope del token
   5. taint: contexto L2 -/-> sumidero de red
   6. monitor de egreso (canaries codificados o fragmentados)
+Un canary de system prompt en un sumidero de red se corta antes que todo lo demás: se audita
+la decisión y `execute` lanza `SystemPromptLeakageError`. Si el canary de E0/E1 viaja hacia E2
+(`transfer` / argumentos de la Aduana) solo se registra `internal_prompt_leakage`, sin bloquear.
 Cada llamada y cada decisión se escriben en el log de auditoría JSONL.
 """
 from __future__ import annotations
@@ -56,6 +59,19 @@ _CANARY_RE = re.compile(CANARY_PATTERN)
 _SYSTEM_CANARY_RE = re.compile(SYSTEM_CANARY_PATTERN)
 # Enclaves cuyo system prompt no debe aparecer en lo que se entrega a la Aduana.
 INTERNAL_LEAK_SOURCES = frozenset({EnclaveId.ORCHESTRATOR, EnclaveId.VAULT_WORKER})
+
+
+class SecurityViolation(Exception):
+    """Violación de seguridad que aborta la sesión (fail-closed). Nunca incluye valores de canaries."""
+
+    def __init__(self, rule: str, reason: str) -> None:
+        super().__init__(reason)
+        self.rule = rule
+        self.reason = reason
+
+
+class SystemPromptLeakageError(SecurityViolation):
+    """Un canary de system prompt intentó salir por un sumidero de red (`web_search`, `fetch_url`)."""
 
 
 def redact(text: str, limit: int = 300) -> str:
@@ -355,6 +371,8 @@ class CapabilityBroker:
                          reason=decision.reason, step_id=call.token.step_id if call.token else None,
                          target=redact(self._last_target) if self._last_target else None,
                          label=label.name if decision.allowed and label is not None else None)
+        if decision.rule == "system_canary_egress":
+            raise SystemPromptLeakageError(decision.rule, f"{enclave.value}: {decision.reason} via {call.tool}")
         return ToolResult(call_id=call.call_id, decision=decision, output=output,
                           label=label if decision.allowed else None)
 
@@ -378,6 +396,10 @@ class CapabilityBroker:
             if findings:
                 self.audit.write(self.session_id, AuditKind.EGRESS_ALERT, enclave=enclave.value, tool=tool.value,
                                  call_id=call.call_id, findings=[f.model_dump() for f in findings])
+            # Un canary de system prompt en un sumidero es una fuga confirmada: se bloquea antes de
+            # cualquier otra regla (aunque el token o el host también fallen) y `execute` lanza la excepción.
+            if any(finding.kind == "system" for finding in findings):
+                return self._deny("system_canary_egress", "system prompt canary in network sink")
         if tool not in ENCLAVE_TOOLS[enclave] or tool not in self._tools:
             return self._deny("tool_not_in_registry", f"{tool.value} is not registered for {enclave.value}")
         # 2. argumentos
@@ -411,9 +433,7 @@ class CapabilityBroker:
             # 5. taint
             if self.config.taint and self._context[enclave] >= Label.L2:
                 return self._deny("taint_l2_to_network", "enclave context carries L2 data")
-            # 6. egreso
-            if any(finding.kind == "system" for finding in findings):
-                return self._deny("system_canary_egress", "system prompt canary in network sink")
+            # 6. egreso (los canaries de system prompt ya se cortaron arriba)
             if findings:
                 return self._deny("egress_canary_detected", f"{len(findings)} canary finding(s)")
             return BrokerDecision(allowed=True, rule="allow"), (lambda: fn(**call.args)), Label.L0

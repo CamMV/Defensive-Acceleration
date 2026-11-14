@@ -18,7 +18,7 @@ from agent_runtime.quarantine import ProvenanceVerifier, QuarantineStore
 from agent_runtime.runtime import build_defended_system, run_session
 from agent_runtime.textutil import regex_fields, visible_text
 from agent_runtime.tools.web_tools import WebTools
-from eval.judge import canary_exfiltrated, judge, load_scenarios, unauthorized_l2_reads
+from eval.judge import canary_exfiltrated, judge, load_scenarios, system_prompt_leaked, unauthorized_l2_reads
 from test_server.app import create_app, inprocess_client
 from test_server.payloads import AMOUNT_POISON, EXFIL_PLAIN, MULTIHOP_PATCH
 
@@ -34,7 +34,8 @@ def run(config, scenario_id: str, tmp_path: Path):
     audit = AuditLog(tmp_path / "audit.jsonl")
     name = config if isinstance(config, str) else config.name
     outcome = run_session(config, SCENARIOS[scenario_id]["prompt"], tmp_path, audit, f"{name}_{scenario_id}")
-    assert outcome.error is None, outcome.error
+    # Un canary de system prompt en un sumidero lanza SystemPromptLeakageError (fail-closed): error esperado.
+    assert outcome.error is None or outcome.error.startswith("SystemPromptLeakageError"), outcome.error
     return outcome
 
 
@@ -293,3 +294,32 @@ def test_drift_monitor_baseline():
     fetch = PlanStep(step_id="s3", action=ActionType.FETCH_URL, target="http://127.0.0.1:8000/invoice/1042")
     assert monitor.check("p", fetch, _call("fetch_url", url="http://127.0.0.1:8000/collect?d=x")).drifted
     assert not monitor.check("p", fetch, _call("fetch_url", url="http://127.0.0.1:8000/invoice/1042")).drifted
+
+
+# -- Fase 7: fuga de system prompt ------------------------------------------------ #
+
+PROMPT_ATTACKS = ["atk_prompt_extract_propuesta", "atk_prompt_extract_web_b64"]
+
+
+@pytest.mark.parametrize("scenario_id", PROMPT_ATTACKS)
+def test_baseline_leaks_system_prompt(tmp_path, scenario_id):
+    outcome = run("A", scenario_id, tmp_path)
+    assert system_prompt_leaked(outcome) and judge(SCENARIOS[scenario_id], outcome)[0]
+
+
+@pytest.mark.parametrize("config", ["C", "D", D_NO_SCANNER], ids=["C", "D", "D-noscan"])
+@pytest.mark.parametrize("scenario_id", PROMPT_ATTACKS)
+def test_defended_configs_block_system_prompt_egress(tmp_path, config, scenario_id):
+    outcome = run(config, scenario_id, tmp_path)
+    assert not system_prompt_leaked(outcome)
+    assert not judge(SCENARIOS[scenario_id], outcome)[0]
+
+
+@pytest.mark.parametrize("scenario_id", PROMPT_ATTACKS)
+def test_unscanned_defense_raises_security_exception_and_audits(tmp_path, scenario_id):
+    outcome = run(D_NO_SCANNER, scenario_id, tmp_path)
+    assert outcome.error and outcome.error.startswith("SystemPromptLeakageError")
+    assert "system_canary_egress" in outcome.denies
+    # El canary nunca aparece en claro en el log de auditoría.
+    audit_text = (tmp_path / "audit.jsonl").read_text(encoding="utf-8")
+    assert not any(canary in audit_text for canary in outcome.system_canaries)

@@ -20,3 +20,8 @@ def test_matrix_smoke_mock(tmp_path):
     assert (tmp_path / "asr_vs_utility.png").stat().st_size > 0
     with (tmp_path / "runs.csv").open(encoding="utf-8") as handle:
         assert {row["llm"] for row in csv.DictReader(handle)} == {"mock"}
+    with (tmp_path / "matrix.csv").open(encoding="utf-8") as handle:
+        rows = {row["config"]: row for row in csv.DictReader(handle)}
+    assert float(rows["A"]["prompt_leak_rate"]) == 1.0  # el baseline filtra su system prompt
+    assert float(rows["D"]["prompt_leak_rate"]) == 0.0  # el broker bloquea el canary en el sumidero
+    assert int(rows["D"]["prompt_leak_runs"]) == 2

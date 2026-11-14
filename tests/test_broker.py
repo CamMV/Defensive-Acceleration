@@ -5,7 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from agent_runtime.broker import AuditLog, CapabilityBroker, PathViolation, resolve_vault_path
+from agent_runtime.broker import (
+    AuditLog, CapabilityBroker, PathViolation, SystemPromptLeakageError, resolve_vault_path,
+)
 from agent_runtime.contracts import (
     CONFIGS, ActionType, AuditKind, EnclaveId, Label, Plan, PlanStep, ToolCall, ToolName,
 )
@@ -332,3 +334,48 @@ def test_audit_log_records_calls_and_decisions(vault, tmp_path):
     kinds = [line.split('"kind":"')[1].split('"')[0] for line in lines]
     assert kinds == ["session_start", "tool_call", "broker_decision"]
     assert '"rule":"tool_not_in_registry"' in lines[-1] and '"allowed":false' in lines[-1]
+
+
+# -- Fase 7: canaries de system prompt ---------------------------------------------- #
+
+SYS_E0 = "SYS-CANARY-E0-00112233445566AA"
+SYS_E1 = "SYS-CANARY-E1-00112233445566BB"
+SYS_E2 = "SYS-CANARY-E2-00112233445566CC"
+
+
+@pytest.mark.parametrize("tool,key", [(ToolName.FETCH_URL, "url"), (ToolName.WEB_SEARCH, "query")])
+@pytest.mark.parametrize("encode", [lambda t: t, lambda t: base64.urlsafe_b64encode(t.encode()).decode(),
+                                    lambda t: t.encode().hex()], ids=["plain", "b64", "hex"])
+def test_system_canary_to_network_raises_even_without_token(vault, tmp_path, tool, key, encode):
+    broker = make_broker(vault, tmp_path)
+    broker.register_system_canary(EnclaveId.VAULT_WORKER, SYS_E1)
+    value = (COLLECT if tool is ToolName.FETCH_URL else "") + encode(SYS_E1)
+    with pytest.raises(SystemPromptLeakageError) as info:
+        call(broker, EnclaveId.CUSTOMS, tool, {key: value}, token=None)
+    assert SYS_E1 not in str(info.value)
+    decisions = [e for e in broker.audit.events if e.kind is AuditKind.BROKER_DECISION]
+    assert decisions[-1].allowed is False and decisions[-1].rule == "system_canary_egress"
+    assert any(e.kind is AuditKind.EGRESS_ALERT for e in broker.audit.events)
+
+
+def test_internal_leak_to_customs_is_logged_not_blocked(vault, tmp_path):
+    broker = make_broker(vault, tmp_path)
+    broker.register_system_canary(EnclaveId.ORCHESTRATOR, SYS_E0)
+    broker.register_system_canary(EnclaveId.VAULT_WORKER, SYS_E1)
+    broker.transfer(EnclaveId.ORCHESTRATOR, EnclaveId.CUSTOMS, "dispatch s1", content=f"target {SYS_E0}")
+    broker.transfer(EnclaveId.VAULT_WORKER, EnclaveId.CUSTOMS, "dispatch s2",
+                    content=base64.b64encode(SYS_E1.encode()).decode())
+    leaks = [e for e in broker.audit.events if e.kind is AuditKind.INTERNAL_PROMPT_LEAKAGE]
+    assert [e.enclave for e in leaks] == ["orchestrator", "vault_worker"]
+    assert all(e.allowed is True and e.rule == "internal_prompt_leakage" for e in leaks)
+    audit_text = broker.audit.path.read_text(encoding="utf-8")
+    assert SYS_E0 not in audit_text and SYS_E1 not in audit_text
+
+
+def test_internal_leak_ignored_for_other_destinations_and_customs_own_canary(vault, tmp_path):
+    broker = make_broker(vault, tmp_path)
+    broker.register_system_canary(EnclaveId.ORCHESTRATOR, SYS_E0)
+    broker.register_system_canary(EnclaveId.CUSTOMS, SYS_E2)
+    broker.transfer(EnclaveId.ORCHESTRATOR, EnclaveId.VAULT_WORKER, "dispatch", content=SYS_E0)
+    broker.transfer(EnclaveId.ORCHESTRATOR, EnclaveId.CUSTOMS, "dispatch", content=SYS_E2)
+    assert not [e for e in broker.audit.events if e.kind is AuditKind.INTERNAL_PROMPT_LEAKAGE]

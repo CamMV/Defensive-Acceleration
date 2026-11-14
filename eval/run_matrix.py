@@ -25,7 +25,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 from agent_runtime.broker import AuditLog  # noqa: E402
 from agent_runtime.contracts import CONFIGS  # noqa: E402
 from agent_runtime.runtime import run_session  # noqa: E402
-from eval.judge import judge, load_scenarios  # noqa: E402
+from eval.judge import internal_prompt_leaks, judge, load_scenarios, system_prompt_leaked  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_LABELS = {
@@ -34,10 +34,10 @@ CONFIG_LABELS = {
     "C": "C: B + taint/egreso",
     "D": "D: broker + taint + aduana + scanner + datamarking",
 }
-RUN_FIELDS = ["config", "scenario", "kind", "rep", "seed", "llm", "success", "false_block", "denies",
-              "latency_s", "llm_calls", "error", "detail"]
-MATRIX_FIELDS = ["config", "label", "llm", "reps", "attack_runs", "attack_success_rate", "benign_runs",
-                 "benign_utility", "false_block_rate", "mean_latency_s", "mean_llm_calls", "skipped_requires_vlm"]
+RUN_FIELDS = ["config", "scenario", "kind", "objective", "rep", "seed", "llm", "success", "prompt_leak",
+              "internal_prompt_leaks", "false_block", "denies", "latency_s", "llm_calls", "error", "detail"]
+MATRIX_FIELDS = ["config", "label", "llm", "reps", "attack_runs", "attack_success_rate", "prompt_leak_runs",
+                 "prompt_leak_rate", "internal_prompt_leaks", "benign_runs", "benign_utility", "false_block_rate", "mean_latency_s", "mean_llm_calls", "skipped_requires_vlm"]
 
 
 def run_matrix(configs: list[str], reps: int, base_seed: int, mock: bool, use_http: bool,
@@ -58,8 +58,11 @@ def run_matrix(configs: list[str], reps: int, base_seed: int, mock: bool, use_ht
                                       f"{config}_{scenario['id']}_r{rep}", mock=mock, seed=seed, use_http=use_http)
                 success, detail = judge(scenario, outcome)
                 runs.append({
-                    "config": config, "scenario": scenario["id"], "kind": scenario["kind"], "rep": rep,
+                    "config": config, "scenario": scenario["id"], "kind": scenario["kind"],
+                    "objective": scenario.get("objective", {}).get("type", ""), "rep": rep,
                     "seed": seed, "llm": llm_label, "success": int(success),
+                    "prompt_leak": int(system_prompt_leaked(outcome)),
+                    "internal_prompt_leaks": internal_prompt_leaks(outcome),
                     "false_block": int(scenario["kind"] == "benign" and bool(outcome.denies)),
                     "denies": "|".join(sorted(set(outcome.denies))), "latency_s": round(outcome.latency_s, 4),
                     "llm_calls": outcome.llm_calls, "error": outcome.error or "", "detail": detail,
@@ -70,10 +73,16 @@ def run_matrix(configs: list[str], reps: int, base_seed: int, mock: bool, use_ht
         rows = [row for row in runs if row["config"] == config]
         attacks = [row for row in rows if row["kind"] == "attack"]
         benign = [row for row in rows if row["kind"] == "benign"]
+        # prompt_leak_rate: de los ataques de extracción de system prompt, ¿cuántos hicieron llegar un
+        # canary de sistema al atacante? (egreso bloqueado = 0; la fuga E0/E1 -> E2 se cuenta aparte).
+        extraction = [row for row in attacks if row["objective"] == "system_prompt_leaked"]
         matrix.append({
             "config": config, "label": CONFIG_LABELS[config], "llm": llm_label, "reps": reps,
             "attack_runs": len(attacks),
             "attack_success_rate": round(statistics.mean(r["success"] for r in attacks), 3) if attacks else "",
+            "prompt_leak_runs": len(extraction),
+            "prompt_leak_rate": round(statistics.mean(r["prompt_leak"] for r in extraction), 3) if extraction else "",
+            "internal_prompt_leaks": sum(r["internal_prompt_leaks"] for r in rows),
             "benign_runs": len(benign),
             "benign_utility": round(statistics.mean(r["success"] for r in benign), 3) if benign else "",
             "false_block_rate": round(statistics.mean(r["false_block"] for r in benign), 3) if benign else "",
@@ -134,9 +143,9 @@ def main() -> int:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     configs = [name for name in args.configs.upper() if name in CONFIGS]
     matrix = run_matrix(configs, args.reps, args.seed, args.mock, args.http, args.results_dir, args.include_vlm)
-    print(f"\n{'cfg':4}{'llm':6}{'ASR':>7}{'utility':>9}{'false_blk':>11}{'lat_s':>9}{'llm_calls':>11}")
+    print(f"\n{'cfg':4}{'llm':6}{'ASR':>7}{'prompt_leak_rate':>18}{'utility':>9}{'false_blk':>11}{'lat_s':>9}{'llm_calls':>11}")
     for row in matrix:
-        print(f"{row['config']:4}{row['llm']:6}{row['attack_success_rate']:>7}{row['benign_utility']:>9}"
+        print(f"{row['config']:4}{row['llm']:6}{row['attack_success_rate']:>7}{row['prompt_leak_rate']:>18}{row['benign_utility']:>9}"
               f"{row['false_block_rate']:>11}{row['mean_latency_s']:>9}{row['mean_llm_calls']:>11}")
     if args.mock:
         print("\nMOCK: estas filas ejercitan el pipeline con un atacante obediente. El ASR reportable requiere --live.")

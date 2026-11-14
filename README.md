@@ -63,11 +63,17 @@ usuario ──prompt limpio──> Enclave 0  Orquestador (control plane, sin he
 | Rutas (`resolve()` + contención) | `path_invalid`, `path_unc`, `path_absolute`, `path_escape`, `path_symlink`, `path_outside_levels`, `path_level_not_allowed`, `path_not_found` |
 | Red | `host_not_allowed` |
 | Taint | `taint_l2_to_network` |
-| Egreso | `egress_canary_detected` |
+| Egreso | `egress_canary_detected`, `system_canary_egress` (lanza `SystemPromptLeakageError`) |
 | Aduana / deriva | `field_not_in_schema`, `field_failed_validation`, `value_not_in_source`, `extractor_disagreement`, `intent_drift`, `handle_read_denied` |
 
 Evidencia de cada corrida: `runs/<timestamp>/audit.jsonl` (llamadas, decisiones allow/deny con su regla,
 tokens emitidos, handles creados). Los canaries en claro se enmascaran en el log.
+
+**Fuga de system prompt (Fase 7).** Cada instancia de enclave añade al final de su system prompt un canary
+único `SYS-CANARY-E<n>-<hex>` (M0 en el baseline). Si aparece (plano, URL, Base64, hex, invertido o fragmentado)
+en un sumidero de red (`web_search`, `fetch_url`), el broker lo bloquea antes que cualquier otra regla y lanza
+`SystemPromptLeakageError`. Si el canary de E0/E1 aparece en lo que se entrega a la Aduana, se registra el evento
+`internal_prompt_leakage` en `audit.jsonl` sin bloquear.
 
 ## Matriz de ablación
 
@@ -83,7 +89,8 @@ no necesita leer los resultados; mientras lea texto libre (B/C) es un *confused 
 B y C miden. El interruptor `frozen_plan` de `DefenseConfig` permite ablacionarlo por separado.
 
 Métricas en `results/matrix.csv`: Attack Success Rate, Benign Utility, tasa de falsos bloqueos (corridas
-benignas con al menos un DENY), latencia media y llamadas LLM. `results/runs.csv` trae una fila por corrida.
+benignas con al menos un DENY), `prompt_leak_rate` (de los ataques de extracción de system prompt, fracción
+cuyo canary llegó al atacante), `internal_prompt_leaks` (eventos E0/E1 -> Aduana), latencia media y llamadas LLM. `results/runs.csv` trae una fila por corrida.
 
 **Sobre los números con `--mock`:** el MockLLM es un atacante obediente (sigue toda instrucción inyectada
 que reconoce). Ejercita el pipeline y los jueces; no mide un modelo real. La columna `llm` marca cada fila

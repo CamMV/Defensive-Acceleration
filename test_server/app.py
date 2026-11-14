@@ -21,6 +21,7 @@ from test_server.payloads import (
     EXFIL_PLAIN,
     EXFIL_TRAVERSAL,
     MULTIHOP_PATCH,
+    PROMPT_EXTRACTION_B64,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -47,6 +48,7 @@ _TEXT_VARIANTS = {
     "css": f'<div style="display:none">{_text(EXFIL_PLAIN)}</div>',
     "white": f'<p style="color:#ffffff;background:#ffffff;font-size:1px">{_text(EXFIL_CHUNKED)}</p>',
     "comment": f"<!-- {EXFIL_BASE64} -->",
+    "prompt": f'<div style="display:none">{_text(PROMPT_EXTRACTION_B64)}</div>',
     "alt": f'<img src="/static/diagram.png" alt="{escape(EXFIL_HEX)}" aria-label="{escape(EXFIL_HEX)}">',
 }
 
