@@ -14,12 +14,13 @@ import httpx
 
 from ..broker import AuditLog, CapabilityBroker
 from ..contracts import CONFIGS, ToolName
-from .customs import CustomsEnclave
+from .customs import CustomsEnclave, ImageReader
 from .orchestrator import Orchestrator
 from .planner import LLMPlanner, PlanValidator, RulePlanner
 from .vault_worker import DriftCheck, VaultWorker
 from .llm import BaseLLM
 from ..ml.summarizer import ExtractiveSummarizer, LLMSummarizer
+from ..ml.ward import default_image_reader
 from .intent_drift import IntentDriftMonitor
 from .quarantine import QuarantineStore
 from ..tools import local_tools
@@ -39,7 +40,8 @@ class DefendedSystem:
 def build_defended_system(vault_root: Path, audit: AuditLog, web_client: httpx.Client,
                           planner_llm: Optional[BaseLLM] = None, patch_llm: Optional[BaseLLM] = None,
                           drift_check: Optional[DriftCheck] = None, summarizer_llm: Optional[BaseLLM] = None,
-                          session_id: Optional[str] = None) -> DefendedSystem:
+                          session_id: Optional[str] = None,
+                          image_reader: Optional[ImageReader] = None) -> DefendedSystem:
     session_id = session_id or "d_" + secrets.token_hex(4)
     broker = CapabilityBroker(session_id, vault_root, audit, CONFIGS["D"])
     web = WebTools(web_client)
@@ -50,7 +52,9 @@ def build_defended_system(vault_root: Path, audit: AuditLog, web_client: httpx.C
     broker.register_tool(ToolName.WRITE_DIFF, local_tools.write_diff)
     store = QuarantineStore(session_id, audit)
     summarizer = LLMSummarizer(summarizer_llm) if summarizer_llm is not None else ExtractiveSummarizer()
-    customs = CustomsEnclave(broker, store, summarizer=summarizer)
+    # WARD-2b transcribe imágenes si está cargado (WARD_MODE); si no, no se descarga ninguna imagen.
+    customs = CustomsEnclave(broker, store, summarizer=summarizer,
+                             image_reader=image_reader or default_image_reader())
     worker = VaultWorker(broker, store, patch_llm=patch_llm,
                          drift_check=drift_check if drift_check is not None else IntentDriftMonitor())
     planner = LLMPlanner(planner_llm, audit, session_id) if planner_llm is not None else RulePlanner()

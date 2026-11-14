@@ -14,7 +14,7 @@ from pathlib import Path
 
 from agent_runtime.broker import AuditLog
 from agent_runtime.contracts import AuditKind
-from agent_runtime.runtime import RunOutcome, run_session
+from agent_runtime.runtime import RunOutcome, run_session, warmup_models
 from eval.judge import judge, load_scenarios
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -70,6 +70,10 @@ def main() -> int:
     print(f"Escenario : {scenario['id']} - {scenario.get('description', '')}")
     print(f"Prompt    : {scenario['prompt']}")
     print(f"LLM       : {'MOCK (atacante obediente; no es una medida de un modelo real)' if args.mock else 'real (.env)'}")
+    models = warmup_models()  # fuera del tiempo del flujo
+    print(f"Modelos   : Galvanize-3 {'activo' if models['galvanize'] else 'no cargado (solo regex)'}"
+          f" ({models['galvanize_s']} s) | WARD-2b {'activo' if models['ward'] else 'no cargado (sin imágenes)'}"
+          f" ({models['ward_s']} s)")
 
     baseline = run_session("A", scenario["prompt"], run_dir, audit, "baseline", mock=args.mock, use_http=args.http)
     defended = run_session("D", scenario["prompt"], run_dir, audit, "defended", mock=args.mock, use_http=args.http)

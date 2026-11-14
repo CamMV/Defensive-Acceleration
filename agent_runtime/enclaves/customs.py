@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import re
 import secrets
+import time
 from typing import Any, Callable, Optional
 from urllib.parse import urljoin
 
@@ -55,8 +56,9 @@ _FORGED_MARKER = re.compile(r"\[DATA_(?:START|END)_\w*\]", re.IGNORECASE)
 
 def no_ocr(image_bytes: bytes) -> str:
     """Baseline sin OCR: el texto que solo existe en imágenes no se lee (ni se obedece)."""
-    # ML-TEAM: implementar OCR/VLM aquí y pasarlo como `ocr=` al construir `Customs`
-    #   (ver `runtime.build_defended_system`).
+    # ML-TEAM: implementado en `agent_runtime/ml/ward.py` (WARD-2b transcribe la imagen) y
+    #   conectado en `runtime.build_defended_system`. El texto transcrito pasa por el mismo
+    #   escáner que el documento (regex + Galvanize-3) antes de usarse.
     #   Entrada: bytes de la imagen (PNG/JPEG, <= 400 kB) descargada con token de sub-recurso.
     #   Salida:  str con el texto reconocido ("" si no hay). Trátalo como NO confiable:
     #            este módulo lo manda a cuarentena (TextField.IMAGE_TEXT) y lo usa como
@@ -86,18 +88,31 @@ class Customs(Enclave):
         if not result.decision.allowed or result.output is None:
             return self._failure(step, result.decision.rule)
         raw = result.output
-        image_text: Optional[str] = None
-        if raw.startswith(IMAGE_DATA_PREFIX):
+        local_image = raw.startswith(IMAGE_DATA_PREFIX)
+        if local_image:
             # Imagen local (.png/.jpg de L0) o URL de imagen: mismo OCR/VLM que las imágenes web.
-            # El texto reconocido es NO confiable: reemplaza al documento y pasa por escáner,
-            # LLM en cuarentena, procedencia y QuarantineStore como cualquier otro texto L0.
-            image_text = self._ocr_bytes(raw)
-            raw = image_text
-        blocked = self._scan(step, raw)
+            # El texto reconocido es NO confiable: reemplaza al documento y pasa por el MISMO escáner,
+            # LLM en cuarentena, procedencia y QuarantineStore que cualquier otro texto L0.
+            raw = self._ocr_bytes(raw)
+        scan = self._scan(step, raw, channel="image" if local_image else "document")
+        blocked = scan is not None and scan.verdict == "malicious"
+        if blocked and local_image:
+            assert scan is not None
+            raw = mask_spans(raw, scan.spans)  # el texto de la imagen bloqueada nunca va a cuarentena en claro
         if not self._config.customs_ml:
             if blocked:
                 return FreeTextResult(step_id=step.step_id, text="[blocked: injection_scan]", label=Label.L0)
             return self._legacy_summary(step, raw)
+        if local_image:
+            return self._structured_record(step, raw, blocked, raw, from_image=True)
+        # Imágenes de la página: el lector transcribe y el texto pasa por el MISMO doble chequeo que el
+        # documento. Si el documento ya está bloqueado no se descargan (menos superficie y latencia).
+        image_text = "" if blocked else self._read_images(step, raw)
+        if image_text.strip():
+            image_scan = self._scan(step, image_text, channel="image")
+            if image_scan is not None and image_scan.verdict == "malicious":
+                blocked = True
+                image_text = mask_spans(image_text, image_scan.spans)
         return self._structured_record(step, raw, blocked, image_text)
 
     def _ocr_bytes(self, data_uri: str) -> str:
@@ -110,19 +125,25 @@ class Customs(Enclave):
 
     # -- escáner y datamarking -------------------------------------------------- #
 
-    def _scan(self, step: PlanStep, raw: str) -> bool:
-        """Escanea el documento crudo ANTES de exponerlo al LLM. True = veredicto malicioso."""
+    def _scan(self, step: PlanStep, raw: str, channel: str = "document") -> Optional[ScanResult]:
+        """Escanea texto no confiable ANTES de exponerlo al LLM. None = escáner desactivado.
+
+        `channel`: "document" (el documento crudo) o "image" (texto transcrito de sus imágenes).
+        """
         if self._scanner is None:
-            return False
+            return None
+        started = time.perf_counter()
         result: ScanResult = self._scanner.scan_document(raw, step.target)
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
         blocked = result.verdict == "malicious"
         # Se auditan score, veredicto y reglas; nunca el texto de los spans.
         self.broker.audit.write(self.broker.session_id, AuditKind.INJECTION_SCAN, enclave=self.enclave_id.value,
                                 allowed=not blocked, rule="injection_scan_malicious" if blocked else "allow",
                                 step_id=step.step_id, source=redact(step.target, 200), score=result.score,
                                 verdict=result.verdict, spans=len(result.spans),
-                                rules=sorted({span.rule for span in result.spans}))
-        return blocked
+                                rules=sorted({span.rule for span in result.spans}), channel=channel,
+                                elapsed_ms=elapsed_ms)
+        return result
 
     def _datamark(self, text: str) -> str:
         """Envuelve texto no confiable con delimitadores; elimina delimitadores falsificados."""
@@ -158,14 +179,13 @@ class Customs(Enclave):
     # -- modo D: registro tipado + handles ------------------------------------ #
 
     def _structured_record(self, step: PlanStep, raw: str, blocked: bool = False,
-                           local_image_text: Optional[str] = None) -> ExtractedRecord:
-        """`local_image_text` no es None cuando el archivo ES una imagen: `raw` es su texto OCR (no hay
-        texto visible ni subimágenes; el OCR solo puede aportar campos que el LLM proponga y la
-        procedencia verifique, nunca el extractor determinista)."""
-        from_image = local_image_text is not None
+                           image_text: str = "", from_image: bool = False) -> ExtractedRecord:
+        """`from_image=True` cuando el archivo ES una imagen: `raw` es su texto OCR (ya enmascarado si el
+        escáner lo bloqueó). No hay texto visible ni subimágenes; el OCR solo puede aportar campos que el
+        LLM proponga y la procedencia verifique, nunca el extractor determinista."""
         visible = "" if from_image else visible_text(raw)
-        image_text = local_image_text if from_image else self._read_images(step, raw)
-        source_text = f"{visible}\n{image_text}"
+        # Texto de imagen bloqueado (enmascarado) no sirve como fuente de procedencia.
+        source_text = visible if blocked else f"{visible}\n{image_text}"
 
         # ML-TEAM: extracción estructurada. Hoy: un LLM de texto + regex de respaldo.
         #   Entrada: `raw` (HTML/markdown crudo, NO confiable) y, si conectan VLM, las imágenes.
@@ -178,9 +198,7 @@ class Customs(Enclave):
             # Veredicto malicioso: el LLM no ve el documento; solo corre el extractor determinista
             # y los tramos señalados se enmascaran antes de ir a cuarentena.
             assert self._scanner is not None
-            if from_image:
-                image_text = mask_spans(image_text, self._scanner.scan_document(image_text, step.target).spans)
-            else:
+            if not from_image:  # el texto de imagen ya llega enmascarado desde `process`
                 quarantined = mask_spans(visible, self._scanner.scan_document(visible, step.target).spans)
         else:
             reply = self._ask("customs_act", self._system_prompt(),

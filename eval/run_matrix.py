@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 from agent_runtime.broker import AuditLog  # noqa: E402
 from agent_runtime.contracts import CONFIGS  # noqa: E402
-from agent_runtime.runtime import run_session  # noqa: E402
+from agent_runtime.runtime import run_session, warmup_models  # noqa: E402
 from eval.judge import internal_prompt_leaks, judge, load_scenarios, system_prompt_leaked  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -142,6 +142,7 @@ def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     configs = [name for name in args.configs.upper() if name in CONFIGS]
+    print(f"Modelos (precarga, fuera de la latencia medida): {warmup_models()}")
     matrix = run_matrix(configs, args.reps, args.seed, args.mock, args.http, args.results_dir, args.include_vlm)
     print(f"\n{'cfg':4}{'llm':6}{'ASR':>7}{'prompt_leak_rate':>18}{'utility':>9}{'false_blk':>11}{'lat_s':>9}{'llm_calls':>11}")
     for row in matrix:
