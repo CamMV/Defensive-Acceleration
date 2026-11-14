@@ -47,23 +47,23 @@ def call(broker, enclave, tool, args, token=None):
 
 def test_worker_reads_l2_and_writes_l1(vault, tmp_path):
     broker = make_broker(vault, tmp_path)
-    token = broker.mint_for_step(step(ActionType.READ_VAULT, "restricted_vault/contract_acme.md"))
+    token = broker.mint_for_step(step(ActionType.READ_VAULT, "restricted_vault/contrato_obra_LP-2026-014.md"))
     result = call(broker, EnclaveId.VAULT_WORKER, ToolName.READ_FILE,
-                  {"path": "restricted_vault/contract_acme.md"}, token)
-    assert result.decision.allowed and result.label is Label.L2 and "Acme Corp" in result.output
+                  {"path": "restricted_vault/contrato_obra_LP-2026-014.md"}, token)
+    assert result.decision.allowed and result.label is Label.L2 and "Constructora Andina" in result.output
     assert broker.context_label(EnclaveId.VAULT_WORKER) is Label.L2
-    token = broker.mint_for_step(step(ActionType.WRITE_REPORT, "internal_workspace/reporte_auditoria.md", "s2"))
+    token = broker.mint_for_step(step(ActionType.WRITE_REPORT, "internal_workspace/acta_auditoria.md", "s2"))
     result = call(broker, EnclaveId.VAULT_WORKER, ToolName.WRITE_DIFF,
-                  {"path": "internal_workspace/reporte_auditoria.md", "old": "", "new": "- ok"}, token)
+                  {"path": "internal_workspace/acta_auditoria.md", "old": "", "new": "- ok"}, token)
     assert result.decision.allowed
-    assert "- ok" in (vault / "internal_workspace/reporte_auditoria.md").read_text(encoding="utf-8")
+    assert "- ok" in (vault / "internal_workspace/acta_auditoria.md").read_text(encoding="utf-8")
 
 
 def test_scope_is_case_and_separator_insensitive(vault, tmp_path):
     broker = make_broker(vault, tmp_path)
-    token = broker.mint_for_step(step(ActionType.READ_VAULT, "restricted_vault/contract_acme.md"))
+    token = broker.mint_for_step(step(ActionType.READ_VAULT, "restricted_vault/contrato_obra_LP-2026-014.md"))
     result = call(broker, EnclaveId.VAULT_WORKER, ToolName.READ_FILE,
-                  {"path": "Restricted_Vault\\CONTRACT_ACME.md"}, token)
+                  {"path": "Restricted_Vault\\CONTRATO_OBRA_LP-2026-014.md"}, token)
     assert result.decision.allowed
 
 
@@ -196,7 +196,7 @@ def test_token_from_other_session_is_rejected(vault, tmp_path):
 
 def test_token_scope_binds_path_and_tool(vault, tmp_path):
     broker = make_broker(vault, tmp_path)
-    token = broker.mint_for_step(step(ActionType.WRITE_REPORT, "internal_workspace/reporte_auditoria.md"))
+    token = broker.mint_for_step(step(ActionType.WRITE_REPORT, "internal_workspace/acta_auditoria.md"))
     result = call(broker, EnclaveId.VAULT_WORKER, ToolName.WRITE_DIFF,
                   {"path": "internal_workspace/app.py", "old": "", "new": "x = 1"}, token)
     assert result.decision.rule == "token_scope_mismatch"
@@ -265,7 +265,7 @@ def test_taint_disabled_in_config_b(vault, tmp_path):
 def test_written_file_inherits_l2_label(vault, tmp_path):
     broker = make_broker(vault, tmp_path)
     broker.note_exposure(EnclaveId.VAULT_WORKER, Label.L2, "test")
-    report = "internal_workspace/reporte_auditoria.md"
+    report = "internal_workspace/acta_auditoria.md"
     token = broker.mint_for_step(step(ActionType.WRITE_REPORT, report))
     call(broker, EnclaveId.VAULT_WORKER, ToolName.WRITE_DIFF, {"path": report, "old": "", "new": "x"}, token)
     token = broker.mint_for_step(step(ActionType.READ_VAULT, report, "s2"))

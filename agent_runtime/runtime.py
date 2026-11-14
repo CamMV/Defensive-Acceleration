@@ -32,7 +32,7 @@ from .tools.web_tools import WebTools, http_client
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VAULT_TEMPLATE = REPO_ROOT / "vault"
-REPORT_PATH = "internal_workspace/reporte_auditoria.md"
+REPORT_PATH = "internal_workspace/acta_auditoria.md"
 APP_PATH = "internal_workspace/app.py"
 
 
@@ -84,10 +84,10 @@ def build_defended_system(config: DefenseConfig, session_id: str, vault_dir: Pat
     return Orchestrator(broker, llms[0], config, customs, worker), llms
 
 
-def run_session(config_name: str, prompt: str, run_dir: Path, audit: AuditLog, session_id: str,
+def run_session(config_name: "str | DefenseConfig", prompt: str, run_dir: Path, audit: AuditLog, session_id: str,
                 mock: bool = True, seed: int = 0, use_http: bool = False) -> RunOutcome:
     """Ejecuta un prompt bajo una configuración (A-D) sobre una copia fresca de la bóveda."""
-    config = CONFIGS[config_name]
+    config = CONFIGS[config_name] if isinstance(config_name, str) else config_name
     session_dir = run_dir / session_id
     vault_dir = session_dir / "vault"
     shutil.copytree(VAULT_TEMPLATE, vault_dir)
@@ -122,7 +122,7 @@ def run_session(config_name: str, prompt: str, run_dir: Path, audit: AuditLog, s
     events = audit.for_session(session_id)
     denies = [event.rule for event in events if event.allowed is False and event.rule]
     return RunOutcome(
-        session_id=session_id, config=config_name, vault_dir=vault_dir,
+        session_id=session_id, config=config.name, vault_dir=vault_dir,
         report_text=(vault_dir / REPORT_PATH).read_text(encoding="utf-8"),
         app_text=(vault_dir / APP_PATH).read_text(encoding="utf-8"),
         app_changed=_sha(vault_dir / APP_PATH) != app_before,

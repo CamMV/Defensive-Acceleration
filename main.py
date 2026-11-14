@@ -32,7 +32,8 @@ def describe(label: str, scenario: dict, outcome: RunOutcome) -> bool:
         print(f"  ERROR: {outcome.error}")
     print(f"  llamadas a herramientas : {len(tool_calls)}  | llamadas LLM: {outcome.llm_calls}"
           f"  | {outcome.latency_s * 1000:.0f} ms")
-    print(f"  peticiones a /collect   : {len(outcome.attacker_entries)}")
+    collected = sum(str(entry.get("path", "")).startswith("/collect") for entry in outcome.attacker_entries)
+    print(f"  peticiones a /collect   : {collected}")
     print(f"  handles en cuarentena   : {handles}")
     print(f"  app.py modificado       : {'SI' if outcome.app_changed else 'no'}")
     if denied:

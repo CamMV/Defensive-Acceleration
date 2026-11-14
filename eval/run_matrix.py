@@ -32,7 +32,7 @@ CONFIG_LABELS = {
     "A": "A: monolítico sin defensa",
     "B": "B: enclaves + broker",
     "C": "C: B + taint/egreso",
-    "D": "D: C + aduana (handles, procedencia, deriva)",
+    "D": "D: broker + taint + aduana + scanner + datamarking",
 }
 RUN_FIELDS = ["config", "scenario", "kind", "rep", "seed", "llm", "success", "false_block", "denies",
               "latency_s", "llm_calls", "error", "detail"]
