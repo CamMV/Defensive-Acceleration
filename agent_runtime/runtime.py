@@ -27,6 +27,8 @@ from .llm import LLMClient, make_llm
 from .monitors.egress import find_canaries
 from .ml.scanner import default_scanner
 from .ml.ward import default_image_reader
+from .ml_d import llm as ml_d_llm
+from .ml_d.system import build_defended_system as build_ml_d_system
 from .monitors.intent_drift import BaselineDriftMonitor, IntentDriftMonitor
 from .quarantine import QuarantineStore
 from .textutil import read_document
@@ -93,6 +95,25 @@ def build_defended_system(config: DefenseConfig, session_id: str, vault_dir: Pat
     return Orchestrator(broker, llms[0], config, customs, worker), llms
 
 
+def run_ml_d(session_id: str, vault_dir: Path, audit: AuditLog, client: httpx.Client, prompt: str,
+             mock: bool) -> int:
+    """Configuración E: ejecuta el sistema de `agent_runtime/ml_d` y devuelve sus llamadas LLM.
+
+    Solo cableado: misma bóveda, mismo cliente web, mismo AuditLog e id de sesión que A-D, para que
+    `eval/judge.py` lo juzgue igual. Con `mock` no hay ningún LLM (planner por reglas y resumen
+    extractivo); en vivo usa los modelos de `.env` igual que `demo_ml.py`.
+    """
+    planner_llm = patch_llm = summarizer_llm = None
+    if not mock:
+        ml_d_llm.load_env(REPO_ROOT / ".env")
+        planner_llm = ml_d_llm.make_llm("orchestrator")
+        patch_llm = ml_d_llm.make_llm("vault_worker") if ml_d_llm.is_configured("vault_worker") else None
+        summarizer_llm = ml_d_llm.make_llm("customs") if ml_d_llm.is_configured("customs") else None
+    system = build_ml_d_system(vault_dir, audit, client, planner_llm=planner_llm, patch_llm=patch_llm,
+                               summarizer_llm=summarizer_llm, session_id=session_id)
+    return system.orchestrator.run(prompt).llm_calls
+
+
 def warmup_models() -> dict[str, Any]:
     """Carga Galvanize-3 y WARD-2b y corre una inferencia de prueba, FUERA del tiempo del flujo.
 
@@ -126,8 +147,9 @@ def warmup_models() -> dict[str, Any]:
 def run_session(config_name: "str | DefenseConfig", prompt: str, run_dir: Path, audit: AuditLog, session_id: str,
                 mock: bool = True, seed: int = 0, use_http: bool = False, ocr: Optional[OcrFn] = None,
                 llm_factory: Callable[[str, bool, int], LLMClient] = make_llm,
-                pages: Optional[dict[str, str]] = None, assets: Optional[dict[str, bytes]] = None) -> RunOutcome:
-    """Ejecuta un prompt bajo una configuración (A-D) sobre una copia fresca de la bóveda.
+                pages: Optional[dict[str, str]] = None, assets: Optional[dict[str, bytes]] = None,
+                drift_monitor: Optional[IntentDriftMonitor] = None) -> RunOutcome:
+    """Ejecuta un prompt bajo una configuración (A-E) sobre una copia fresca de la bóveda.
 
     `llm_factory`, `pages` y `assets` son ganchos del benchmark de extremo a extremo
     (eval/benchmark/e2e.py): otro LLM simulado y documentos extra en el servidor en proceso.
@@ -151,11 +173,17 @@ def run_session(config_name: "str | DefenseConfig", prompt: str, run_dir: Path, 
     error: Optional[str] = None
     llms: list[LLMClient] = []
     system_canaries: list[str] = []
+    ml_d_calls = 0
     started = time.perf_counter()
     try:
-        if config.privilege_separation:
+        if config.engine == "ml_d":
+            # ml_d no pone canaries de system prompt: `system_canaries` queda vacío y la matriz
+            # reporta su prompt_leak como "no medido" en vez de 0.
+            ml_d_calls = run_ml_d(session_id, vault_dir, audit, client, prompt, mock)
+        elif config.privilege_separation:
             orchestrator, llms = build_defended_system(config, session_id, vault_dir, audit, web, prompt, mock, seed,
-                                                           ocr=ocr, llm_factory=llm_factory)
+                                                           ocr=ocr, llm_factory=llm_factory,
+                                                           drift_monitor=drift_monitor)
             system_canaries = [orchestrator.system_canary, orchestrator._customs.system_canary,
                                orchestrator._worker.system_canary]
             orchestrator.run(prompt)
@@ -179,6 +207,6 @@ def run_session(config_name: "str | DefenseConfig", prompt: str, run_dir: Path, 
         app_changed=_sha(vault_dir / APP_PATH) != app_before,
         attacker_entries=_read_jsonl(attacker_log, skip), canaries=list(dict.fromkeys(canaries)),
         system_canaries=system_canaries,
-        events=events, llm_calls=sum(llm.calls for llm in llms), latency_s=latency,
+        events=events, llm_calls=sum(llm.calls for llm in llms) + ml_d_calls, latency_s=latency,
         used_mock=mock, error=error, denies=denies,
     )

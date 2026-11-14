@@ -129,6 +129,8 @@ class DefenseConfig(_Strict):
     customs_ml: bool            # handles + procedencia + deriva
     injection_scanner: bool = False  # escáner de inyección antes de exponer el LLM de la Aduana
     datamarking: bool = False        # spotlighting: delimitadores alrededor del texto no confiable
+    # Qué implementación ejecuta la sesión: `enclaves` (agent_runtime/enclaves) o `ml_d` (agent_runtime/ml_d).
+    engine: Literal["enclaves", "ml_d"] = "enclaves"
 
 
 CONFIGS: dict[str, DefenseConfig] = {
@@ -141,6 +143,11 @@ CONFIGS: dict[str, DefenseConfig] = {
     "D": DefenseConfig(name="D", privilege_separation=True, taint=True,
                        egress_monitor=True, frozen_plan=True, customs_ml=True,
                        injection_scanner=True, datamarking=True),
+    # E = "D-ML: plan DAG congelado". Mismo broker y mismas reglas que D (ml_d construye su broker con
+    # CONFIGS["D"]), pero con el planner + PlanValidator + intérprete DAG + aduana determinista de ml_d.
+    # ml_d no usa el escáner ni el datamarking de `enclaves/customs.py`; por eso van en False aquí.
+    "E": DefenseConfig(name="E", privilege_separation=True, taint=True,
+                       egress_monitor=True, frozen_plan=True, customs_ml=True, engine="ml_d"),
 }
 
 # --------------------------------------------------------------------------- #
