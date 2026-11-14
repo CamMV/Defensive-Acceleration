@@ -163,7 +163,9 @@ Cambios respecto a la estructura objetivo, con su razón:
 - **Monitor de egreso.** Decodifica un nivel sobre URL-decoding. Codificaciones anidadas (Base64 dentro de
   hex), cifrado, o fragmentos menores a 4 caracteres escapan. El juez de exfiltración reutiliza estos
   decodificadores, así que comparte el mismo punto ciego.
-- **Imágenes.** Sin OCR/VLM el texto en imágenes no se lee: el ataque por imagen no se puede ejecutar ni medir todavía.
+- **Imágenes.** WARD-2b transcribe el texto de las imágenes y ese texto pasa por el mismo doble chequeo, pero
+  transcribir no es la tarea con la que se entrenó. Sin el modelo (`WARD_MODE=off`) el texto en imágenes no se
+  lee. La corrida con LLM real se hizo sin imágenes (`--no-images`).
 - **Baselines léxicos.** `intent_drift` y la detección de elementos ocultos en HTML son reglas simples; un CSS
   externo o un contraste casi igual las evade.
 - **Uso dual.** Los payloads son genéricos y de demostración, apuntan solo al servidor local y no incluyen
