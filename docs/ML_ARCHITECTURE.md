@@ -170,7 +170,7 @@ de alcance: OCR/VLM, LLM para redactar en E1 y embeddings (trabajo futuro).
 |---|---|---|---|
 | M0 | Este documento + acordar `PlanStep.inputs` | revisión con Ciber | 🟡 doc listo, falta acuerdo |
 | M1 | `llm.py` (cliente, `MockLLM`, métricas) + `ml/vectors.py` | `pytest tests/test_llm.py tests/test_vectors.py` | ✅ 17 tests (98 en total) |
-| M2 | `quarantine.py`: store, handles, procedencia + normalizadores | `pytest tests/test_quarantine.py` | ⬜ |
+| M2 | `quarantine.py`: store, handles, procedencia + normalizadores | `pytest tests/test_quarantine.py` | ✅ 21 tests (119 en total) |
 | M3 | `customs.py`: parseo visible/oculto, extractores, señal de inyección | `pytest tests/test_customs.py` | ⬜ |
 | M4 | Planner (LLM + fallback por reglas) + validator + intérprete DAG + `vault_worker` | `python main.py --mock` | ⬜ |
 | M5 | `intent_drift.py` (plan + AST/coseno) + set etiquetado de diffs | `pytest tests/test_intent_drift.py` | ⬜ |
