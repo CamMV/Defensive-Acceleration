@@ -146,6 +146,8 @@ class PlanStep(_Strict):
     action: ActionType
     target: Annotated[str, StringConstraints(min_length=1, max_length=400)]
     origin: Literal["user_prompt", "replan"] = "user_prompt"
+    # Aristas del DAG: pasos anteriores cuyo output consume este paso (solo hacia atrás).
+    inputs: tuple[StepId, ...] = ()
     # Solo en modo reactivo (B/C): texto libre derivado de resultados. En D es None.
     payload: Optional[str] = None
 

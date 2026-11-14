@@ -163,7 +163,9 @@ así que el 0.63 está inflado; no hay que venderlo como tasa de detección gene
 
 ## 5. Contrato a acordar con Ciberseguridad
 
-Ya aplicado (aditivo): `AuditKind.INJECTION_SIGNAL` para la telemetría de la Aduana.
+Ya aplicado (aditivo, revisar con Ciber): `AuditKind.INJECTION_SIGNAL` para la telemetría
+de la Aduana y `PlanStep.inputs` (aristas del DAG, por defecto `()`). Los tests del broker
+siguen en verde.
 
 Pendiente: en M3 la búsqueda devuelve sus resultados solo como handle `body`. Para planear
 "busca X y abre el primer resultado" hace falta un campo tipado de URLs en
@@ -195,7 +197,7 @@ de alcance: OCR/VLM, LLM para redactar en E1 y embeddings (trabajo futuro).
 | M1 | `llm.py` (cliente, `MockLLM`, métricas) + `ml/vectors.py` | `pytest tests/test_llm.py tests/test_vectors.py` | ✅ 17 tests (98 en total) |
 | M2 | `quarantine.py`: store, handles, procedencia + normalizadores | `pytest tests/test_quarantine.py` | ✅ 21 tests (119 en total) |
 | M3 | `customs.py`: parseo visible/oculto, extractores, señal de inyección | `pytest tests/test_customs.py` | ✅ 23 tests (142 en total) |
-| M4 | Planner (LLM + fallback por reglas) + validator + intérprete DAG + `vault_worker` | `python main.py --mock` | ⬜ |
+| M4 | Planner (LLM + fallback por reglas) + validator + intérprete DAG + `vault_worker` | `python main.py --mock` | ✅ 13 tests; demo: ASR 0/4, utilidad 3/3, 0 llamadas LLM |
 | M5 | `intent_drift.py` (plan + AST/coseno) + set etiquetado de diffs | `pytest tests/test_intent_drift.py` | ⬜ |
 | M6 | Live con Ollama local: Planner real; D contra el baseline A de Ciber | `python main.py --live` | ⬜ |
 | M7 | Matriz A vs D: ASR, utilidad, falsos bloqueos, **latencia, llamadas LLM** | `python eval/run_matrix.py --live` | ⬜ |
