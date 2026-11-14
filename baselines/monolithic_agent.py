@@ -14,6 +14,7 @@ from pathlib import Path
 
 from agent_runtime.broker import AuditLog, redact
 from agent_runtime.contracts import AuditKind
+from agent_runtime.enclaves.base import new_system_canary, with_system_canary
 from agent_runtime.llm import LLMClient, parse_json
 from agent_runtime.tools import local_tools
 from agent_runtime.tools.web_tools import WebTools
@@ -37,13 +38,15 @@ class MonolithicAgent:
         self._audit = audit
         self._session_id = session_id
         self.history: list[dict[str, str]] = []
+        self.system_canary = new_system_canary("M0")
 
     def run(self, user_prompt: str) -> str:
         last_result: str | None = None
         for _ in range(MAX_TURNS):
             # El historial completo viaja en cada turno: es justo la superficie de ataque del baseline.
             user = json.dumps({"prompt": user_prompt, "history": self.history[-12:], "last_result": last_result})
-            reply = parse_json(self._llm.complete("monolith_step", SYSTEM_PROMPT, user))
+            system = with_system_canary(SYSTEM_PROMPT, self.system_canary)
+            reply = parse_json(self._llm.complete("monolith_step", system, user))
             if "tool" not in reply:
                 return str(reply.get("final", ""))
             tool, args = str(reply["tool"]), reply.get("args") if isinstance(reply.get("args"), dict) else {}

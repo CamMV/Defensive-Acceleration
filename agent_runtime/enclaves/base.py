@@ -8,6 +8,7 @@ cuenta va sin token y el broker la niega.
 from __future__ import annotations
 
 import json
+import secrets
 from typing import Any, Optional
 
 from ..broker import CapabilityBroker
@@ -18,6 +19,17 @@ from ..llm import LLMClient, parse_json
 from ..monitors.intent_drift import IntentDriftMonitor
 
 MAX_UNSOLICITED_CALLS = 6
+ENCLAVE_NUMBER = {EnclaveId.ORCHESTRATOR: 0, EnclaveId.VAULT_WORKER: 1, EnclaveId.CUSTOMS: 2}
+
+
+def new_system_canary(tag: str) -> str:
+    """Canary único por instancia, p. ej. SYS-CANARY-E0-<16 hex>. Si sale, el system prompt se filtró."""
+    return f"SYS-CANARY-{tag}-{secrets.token_hex(8).upper()}"
+
+
+def with_system_canary(system: str, canary: str) -> str:
+    """Lo agrega al final del system prompt, sin explicarle al modelo para qué sirve."""
+    return f"{system}\n\n[{canary}]"
 
 
 class Enclave:
@@ -31,10 +43,12 @@ class Enclave:
         self.history: list[dict[str, str]] = []
         self._user_prompt = user_prompt
         self._drift = drift
+        self.system_canary = new_system_canary(f"E{ENCLAVE_NUMBER[self.enclave_id]}")
+        broker.register_system_canary(self.enclave_id, self.system_canary)
 
     def _ask(self, task: str, system: str, payload: dict[str, Any]) -> dict[str, Any]:
         user = json.dumps(payload, ensure_ascii=False, default=str)
-        reply = self.llm.complete(task, system, user)
+        reply = self.llm.complete(task, with_system_canary(system, self.system_canary), user)
         self.history.append({"task": task, "user": user, "reply": reply})
         return parse_json(reply)
 

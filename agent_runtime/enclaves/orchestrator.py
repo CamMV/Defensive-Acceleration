@@ -99,7 +99,8 @@ class Orchestrator(Enclave):
             enclave_id = ACTION_ROUTING[step.action][0]
             token = self.broker.mint_for_step(step)
             # Lo que el Orquestador sabe viaja con el despacho: el destino hereda su etiqueta.
-            self.broker.transfer(self.enclave_id, enclave_id, f"dispatch {step.step_id}")
+            self.broker.transfer(self.enclave_id, enclave_id, f"dispatch {step.step_id}",
+                                 content=f"{step.target}\n{step.payload or str()}")
             if token is None:
                 output = self._not_authorized(step)
             elif enclave_id is EnclaveId.CUSTOMS:

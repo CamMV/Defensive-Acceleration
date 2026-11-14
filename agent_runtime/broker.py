@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from .contracts import (
-    ACTION_ROUTING, CANARY_PATTERN, ENCLAVE_TOOLS, NETWORK_SINKS, TOOL_OPERATION, VAULT_LEVELS,
+    ACTION_ROUTING, CANARY_PATTERN, ENCLAVE_TOOLS, SYSTEM_CANARY_PATTERN, NETWORK_SINKS, TOOL_OPERATION, VAULT_LEVELS,
     ActionType, AuditEvent, AuditKind, BrokerDecision, CapabilityToken, DefenseConfig, EnclaveId,
     Label, Operation, Plan, PlanStep, ToolCall, ToolName, ToolResult,
 )
@@ -53,11 +53,15 @@ STEP_EXTRA_TOOLS: dict[ActionType, frozenset[ToolName]] = {
 SUBRESOURCE_TARGET = re.compile(r"^127\.0\.0\.1:8000/static/[\w.\-]{1,80}$")
 _WINDOWS_RESERVED = re.compile(r"^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$", re.IGNORECASE)
 _CANARY_RE = re.compile(CANARY_PATTERN)
+_SYSTEM_CANARY_RE = re.compile(SYSTEM_CANARY_PATTERN)
+# Enclaves cuyo system prompt no debe aparecer en lo que se entrega a la Aduana.
+INTERNAL_LEAK_SOURCES = frozenset({EnclaveId.ORCHESTRATOR, EnclaveId.VAULT_WORKER})
 
 
 def redact(text: str, limit: int = 300) -> str:
     """Trunca y enmascara canaries en claro antes de escribir en el log."""
     masked = _CANARY_RE.sub(lambda m: f"CANARY-<{canary_id(m.group(0))}>", text)
+    masked = _SYSTEM_CANARY_RE.sub(lambda m: f"SYS-CANARY-<{canary_id(m.group(0))}>", masked)
     return masked if len(masked) <= limit else masked[:limit] + f"...(+{len(masked) - limit})"
 
 
@@ -191,6 +195,7 @@ class CapabilityBroker:
         self._file_labels: dict[str, Label] = {}
         self._call_seq = 0
         self._last_target: Optional[str] = None
+        self._system_canaries: dict[str, EnclaveId] = {}  # canary_id -> enclave dueño
         self.canaries = self._load_canaries()
         self.egress = EgressMonitor(self.canaries, coverage_threshold=0.75)
         audit.write(session_id, AuditKind.SESSION_START, config=config.model_dump(),
@@ -210,6 +215,22 @@ class CapabilityBroker:
 
     def register_tool(self, tool: ToolName, fn: Callable[..., str]) -> None:
         self._tools[tool] = fn
+
+    def register_system_canary(self, enclave: EnclaveId, canary: str) -> None:
+        """Canary del system prompt de un enclave. El monitor de egreso lo vigila en todo sumidero."""
+        self._system_canaries[canary_id(canary)] = enclave
+        self.egress.add_canary(canary, kind="system")
+
+    def check_internal_leak(self, destination: EnclaveId, text: str, channel: str) -> None:
+        """Registra (sin bloquear) si el system prompt de E0/E1 aparece en lo que llega a la Aduana."""
+        if destination is not EnclaveId.CUSTOMS or not text:
+            return
+        for finding in self.egress.scan(text):
+            owner = self._system_canaries.get(finding.canary_id)
+            if finding.kind == "system" and owner in INTERNAL_LEAK_SOURCES:
+                self.audit.write(self.session_id, AuditKind.INTERNAL_PROMPT_LEAKAGE, enclave=owner.value,
+                                 allowed=True, rule="internal_prompt_leakage", destination=destination.value,
+                                 channel=channel, canary_id=finding.canary_id, encoding=finding.encoding)
 
     def new_call_id(self) -> str:
         self._call_seq += 1
@@ -300,8 +321,12 @@ class CapabilityBroker:
             self.audit.write(self.session_id, AuditKind.EXPOSURE, enclave=enclave.value,
                              label=label.name, reason=reason)
 
-    def transfer(self, source: EnclaveId, destination: EnclaveId, reason: str) -> None:
-        """Mensaje en texto libre entre enclaves: el destino hereda la etiqueta del origen."""
+    def transfer(self, source: EnclaveId, destination: EnclaveId, reason: str, content: str = "") -> None:
+        """Mensaje entre enclaves: el destino hereda la etiqueta del origen.
+
+        `content` es lo que viaja en el mensaje; se revisa por fuga interna de system prompt.
+        """
+        self.check_internal_leak(destination, content, f"dispatch: {reason}")
         self.note_exposure(destination, self._context[source], f"message from {source.value}: {reason}")
 
     # -- ejecución --------------------------------------------------------- #
@@ -313,6 +338,8 @@ class CapabilityBroker:
                          args={key: redact(value) for key, value in call.args.items()},
                          args_sha256=hashlib.sha256(json.dumps(call.args, sort_keys=True).encode()).hexdigest())
         self._last_target = None
+        for value in call.args.values():
+            self.check_internal_leak(enclave, value, f"tool_call {call.tool}")
         decision, runner, label = self._decide(call)
         output: Optional[str] = None
         if decision.allowed and runner is not None:
@@ -385,6 +412,8 @@ class CapabilityBroker:
             if self.config.taint and self._context[enclave] >= Label.L2:
                 return self._deny("taint_l2_to_network", "enclave context carries L2 data")
             # 6. egreso
+            if any(finding.kind == "system" for finding in findings):
+                return self._deny("system_canary_egress", "system prompt canary in network sink")
             if findings:
                 return self._deny("egress_canary_detected", f"{len(findings)} canary finding(s)")
             return BrokerDecision(allowed=True, rule="allow"), (lambda: fn(**call.args)), Label.L0

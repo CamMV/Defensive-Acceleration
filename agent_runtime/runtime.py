@@ -46,6 +46,7 @@ class RunOutcome:
     app_changed: bool
     attacker_entries: list[dict[str, Any]]
     canaries: list[str]
+    system_canaries: list[str]
     events: list[AuditEvent]
     llm_calls: int
     latency_s: float
@@ -105,14 +106,19 @@ def run_session(config_name: "str | DefenseConfig", prompt: str, run_dir: Path, 
 
     error: Optional[str] = None
     llms: list[LLMClient] = []
+    system_canaries: list[str] = []
     started = time.perf_counter()
     try:
         if config.privilege_separation:
             orchestrator, llms = build_defended_system(config, session_id, vault_dir, audit, web, prompt, mock, seed)
+            system_canaries = [orchestrator.system_canary, orchestrator._customs.system_canary,
+                               orchestrator._worker.system_canary]
             orchestrator.run(prompt)
         else:
             llms = [make_llm("baseline", mock, seed)]
-            MonolithicAgent(llms[0], vault_dir, web, audit, session_id).run(prompt)
+            agent = MonolithicAgent(llms[0], vault_dir, web, audit, session_id)
+            system_canaries = [agent.system_canary]
+            agent.run(prompt)
     except Exception as exc:  # una corrida rota cuenta como fallo, no detiene la matriz
         error = f"{type(exc).__name__}: {exc}"
     finally:
@@ -127,6 +133,7 @@ def run_session(config_name: "str | DefenseConfig", prompt: str, run_dir: Path, 
         app_text=(vault_dir / APP_PATH).read_text(encoding="utf-8"),
         app_changed=_sha(vault_dir / APP_PATH) != app_before,
         attacker_entries=_read_jsonl(attacker_log, skip), canaries=list(dict.fromkeys(canaries)),
+        system_canaries=system_canaries,
         events=events, llm_calls=sum(llm.calls for llm in llms), latency_s=latency,
         used_mock=mock, error=error, denies=denies,
     )
