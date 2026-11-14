@@ -33,6 +33,7 @@ from .contracts import (
     Label, Operation, Plan, PlanStep, ToolCall, ToolName, ToolResult,
 )
 from .monitors.egress import EgressMonitor, canary_id, find_canaries
+from .textutil import read_document
 from .tools.web_tools import UrlNotAllowed, net_target, search_target
 
 DEFAULT_TTL_SECONDS = 60.0
@@ -222,7 +223,7 @@ class CapabilityBroker:
         restricted = self.vault_root / "restricted_vault"
         for path in sorted(restricted.rglob("*")) if restricted.is_dir() else []:
             if path.is_file() and not _is_reparse_point(path):
-                for canary in find_canaries(path.read_text(encoding="utf-8", errors="replace")):
+                for canary in find_canaries(read_document(path, strict=False)):
                     if canary not in found:
                         found.append(canary)
         return found

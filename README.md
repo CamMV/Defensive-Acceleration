@@ -75,6 +75,12 @@ en un sumidero de red (`web_search`, `fetch_url`), el broker lo bloquea antes qu
 `SystemPromptLeakageError`. Si el canary de E0/E1 aparece en lo que se entrega a la Aduana, se registra el evento
 `internal_prompt_leakage` en `audit.jsonl` sin bloquear.
 
+**Documentos de oficina.** `local_tools.read_file` lee `.pdf`, `.docx`, `.pptx` y `.csv` además de `.txt`/`.md`
+(`textutil.read_document`; dependencias `pypdf`, `python-docx`, `python-pptx`). Lo que un humano no ve (metadatos,
+notas del orador, comentarios, texto blanco/oculto/diminuto) sale en canales `<office-channel name="...">`:
+`visible_text` los descarta, así que no sirven de fuente de procedencia, y un agente sin defensas sí los lee.
+`python scripts/generate_office_vault.py` regenera los documentos binarios de `vault/` (reproducible byte a byte).
+
 ## Matriz de ablación
 
 | Config | Qué activa | Qué significa |

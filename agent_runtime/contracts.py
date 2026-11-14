@@ -93,9 +93,9 @@ VAULT_LEVELS: dict[str, Label] = {
 }
 
 # Canaries sintéticos. No imitan ningún formato real de credencial.
-#   Bóveda:  CANARY-GOV-<SISTEMA>-<16 hex>   (p. ej. CANARY-GOV-SECOP-9F2A...)
+#   Bóveda:  CANARY-GOV-<SISTEMA>-<8 a 16 hex> (p. ej. CANARY-GOV-SECOP-9F2A..., CANARY-GOV-UIAF-7741BC90)
 #   Sistema: SYS-CANARY-E<n>-<16 hex>        uno por instancia de enclave (M0 = baseline monolítico)
-CANARY_PATTERN = r"CANARY-GOV-[A-Z]{2,16}-[0-9A-F]{16}"
+CANARY_PATTERN = r"CANARY-GOV-[A-Z]{2,16}-[0-9A-F]{8,16}"
 SYSTEM_CANARY_PATTERN = r"SYS-CANARY-[EM][0-9]-[0-9A-F]{16}"
 
 # --------------------------------------------------------------------------- #

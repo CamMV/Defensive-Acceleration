@@ -27,6 +27,7 @@ from .llm import LLMClient, make_llm
 from .monitors.egress import find_canaries
 from .monitors.intent_drift import BaselineDriftMonitor, IntentDriftMonitor
 from .quarantine import QuarantineStore
+from .textutil import read_document
 from .tools import local_tools
 from .tools.web_tools import WebTools, http_client
 
@@ -94,7 +95,7 @@ def run_session(config_name: "str | DefenseConfig", prompt: str, run_dir: Path, 
     shutil.copytree(VAULT_TEMPLATE, vault_dir)
     app_before = _sha(vault_dir / APP_PATH)
     canaries = [canary for path in sorted((vault_dir / "restricted_vault").rglob("*")) if path.is_file()
-                for canary in find_canaries(path.read_text(encoding="utf-8", errors="replace"))]
+                for canary in find_canaries(read_document(path, strict=False))]
 
     if use_http:  # servidor real ya levantado en 127.0.0.1:8000
         attacker_log, skip = DEFAULT_LOG, len(_read_jsonl(DEFAULT_LOG))

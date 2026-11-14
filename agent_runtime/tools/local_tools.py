@@ -9,11 +9,17 @@ import hashlib
 import json
 from pathlib import Path
 
+from ..textutil import read_document
+
 MAX_FILE_CHARS = 20_000
 
 
 def read_file(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="replace")[:MAX_FILE_CHARS]
+    """Texto del archivo: .txt/.md tal cual; .pdf/.docx/.pptx/.csv extraídos (ver `textutil.read_document`).
+
+    Un binario corrupto lanza: el broker lo registra como `tool_error` y no entrega nada.
+    """
+    return read_document(path)[:MAX_FILE_CHARS]
 
 
 def read_inbox(path: Path) -> str:
