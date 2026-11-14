@@ -220,7 +220,7 @@ sintético, el modelo `.json`, sus tests y sus evals. Las métricas `auroc`/`rat
 **Regla de paso (doble chequeo, `agent_runtime/ml/scanner.py`, `DualCheckInjectionScanner`)**: un
 documento continúa solo si AMBOS dicen que no hay inyección:
 1. Determinista: la regex de main (`HeuristicInjectionScanner`) no da `malicious`.
-2. Modelo: Galvanize-3 da P(inyección) < 0.9802 (umbral de su model card) en todos los trozos.
+2. Modelo: Galvanize-3 da P(inyección) < 0.95 en todos los trozos (calibrado; la model card usa 0.9802).
 
 Si cualquiera marca, el veredicto es `malicious`: el LLM de la Aduana no ve el documento y los trozos
 se enmascaran. Score = máximo de ambos; los spans son la unión (regla `galvanize3` para el modelo).
@@ -254,7 +254,14 @@ Resultados medidos (RTX 5070 Laptop 8 GB, `eval/eval_galvanize.py`, sets reserva
 |---|---|---|---|---|
 | Regex de main | 1.00 / 0.00 | 0.2 | 0.57 | 0.00 / 0.00 |
 | Galvanize-3 solo (≥ 0.9802) | 1.00 / 0.00 | 9 | 0.98 | 0.80 / 0.00 |
-| **Doble chequeo (por defecto)** | **1.00 / 0.00** | **6** | **0.99** | **0.80 / 0.00** |
+| Doble chequeo @0.9802 | 1.00 / 0.00 | 6 | 0.99 | 0.80 / 0.00 |
+| **Doble chequeo @0.95 (por defecto)** | **1.00 / 0.00** | **6** | **0.99** | **0.95 / 0.05** |
+
+Calibración (`python -m eval.sweep_threshold`): bajar el umbral no cambia el AUROC, solo el corte. Entre
+0.5 y 0.95 el resultado es idéntico; se eligió 0.95 por ser el más conservador. La falsa alarma
+(0.979) es una frase legítima de trámite ciudadano ("acérquese con la cédula original..."): el tipo de
+texto que más puede romperse en sector público. La inyección que sigue pasando (0.002) está camuflada
+como requisito de release engineering.
 
 | Imagen (`test_server/static`) | Transcripción de WARD-2b | Veredicto | WARD |
 |---|---|---|---|

@@ -2,7 +2,7 @@
 
 Un documento (o el texto transcrito de una imagen) continúa solo si AMBOS dicen que no hay inyección:
 1. Determinista: la heurística regex de main (`HeuristicInjectionScanner`) no da "malicious".
-2. Modelo: Galvanize-3 da P(inyección) < umbral (0.9802 por defecto) en todos los trozos.
+2. Modelo: Galvanize-3 da P(inyección) < umbral (0.95 por defecto) en todos los trozos.
 
 Si cualquiera marca, el veredicto es "malicious": el LLM de la Aduana no ve el documento y los trozos
 marcados se enmascaran (comportamiento de main). Score = máximo entre el score de la regex y la

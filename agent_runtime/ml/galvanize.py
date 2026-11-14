@@ -5,8 +5,8 @@
 - Binario: `{0: SAFE, 1: INJECTION}`. P(inyección) = sigmoid(logit[INJECTION] - logit[SAFE]).
 - Lee hasta 512 tokens. Los textos más largos se parten en ventanas solapadas (stride de 256) y se
   toma el máximo, como recomienda su model card.
-- Umbral de servicio de la model card: P >= 0.9802. El umbral 0.5 por defecto del pipeline marca
-  demasiado texto legítimo.
+- Umbral: 0.95 (calibrado con eval/sweep_threshold.py). La model card usa 0.9802; el 0.5 por defecto
+  del pipeline marca demasiado texto legítimo.
 - Multilingüe según su ficha, pero el set de evaluación es privado: sus falsas alarmas sobre
   nuestros documentos en español se miden en `eval/eval_galvanize.py`.
 
@@ -21,7 +21,10 @@ from .hf_common import ModelUnavailable, device_and_dtype, env_float, from_pretr
 
 PREFIX = "GALVANIZE"
 DEFAULT_MODEL = "usezn/Galvanize-3"
-DEFAULT_THRESHOLD = 0.9802
+MODEL_CARD_THRESHOLD = 0.9802  # umbral de servicio de la model card (FPR 0.6 % en su set privado)
+# Calibrado en eval/sweep_threshold.py: a 0.9802 se escapaban 3 inyecciones con 0.966-0.979; a 0.95
+# la detección del set B sube de 0.80 a 0.95 con 1 falsa alarma en 40 frases y 0 en los 21 docs del repo.
+DEFAULT_THRESHOLD = 0.95
 MAX_TOKENS = 512
 STRIDE = 256
 
