@@ -19,7 +19,7 @@ from typing import Optional, Union
 from ..broker import CapabilityBroker
 from ..contracts import ACTION_ROUTING, ActionType, EnclaveId, ExtractedRecord, Plan, PlanStep, WorkerReceipt
 from .customs import CustomsEnclave, StepDenied
-from .planner import LLMPlanner, PlanValidator, RulePlanner
+from .planner import LLMPlanner, PlanValidator, RulePlanner, wants_summary
 from .vault_worker import VaultWorker
 
 Planner = Union[RulePlanner, LLMPlanner]
@@ -66,17 +66,20 @@ class Orchestrator:
         self.broker.register_plan(plan)
         result = RunResult(plan=plan)
         done: dict[str, StepOutcome] = {}
+        summarize = wants_summary(prompt)  # decisión tomada desde el prompt confiable
         for step in plan.steps:
-            outcome = self._run_step(step, prompt, done)
+            outcome = self._run_step(step, prompt, done, summarize)
             done[step.step_id] = outcome
             result.outcomes.append(outcome)
-        llm = getattr(self.planner, "llm", None)
-        result.llm_calls = llm.stats.calls if llm is not None else 0
-        result.used_mock_llm = bool(llm is not None and llm.is_mock)
+        llms = [x for x in (getattr(self.planner, "llm", None), getattr(self.customs.summarizer, "llm", None),
+                            self.worker.patch_llm) if x is not None]
+        result.llm_calls = sum(x.stats.calls for x in llms)
+        result.used_mock_llm = any(x.is_mock for x in llms)
         result.latency_s = time.perf_counter() - started
         return result
 
-    def _run_step(self, step: PlanStep, prompt: str, done: dict[str, StepOutcome]) -> StepOutcome:
+    def _run_step(self, step: PlanStep, prompt: str, done: dict[str, StepOutcome],
+                  summarize: bool = False) -> StepOutcome:
         base = {"step_id": step.step_id, "action": step.action, "target": step.target}
         if any(not done[i].ok for i in step.inputs):
             return StepOutcome(**base, ok=False, rule="input_failed")
@@ -86,7 +89,7 @@ class Orchestrator:
         enclave = ACTION_ROUTING[step.action][0]
         try:
             if enclave is EnclaveId.CUSTOMS:
-                return StepOutcome(**base, ok=True, record=self.customs.run_step(step, token))
+                return StepOutcome(**base, ok=True, record=self.customs.run_step(step, token, summarize))
             inputs = [done[i] for i in step.inputs]
             records = [o.record for o in inputs if o.record is not None]
             vault_reads = [o.step_id for o in inputs if o.action is ActionType.READ_VAULT]

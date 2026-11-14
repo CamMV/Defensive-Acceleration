@@ -233,6 +233,7 @@ class TextField(str, Enum):
     BODY = "body"
     NOTES = "notes"
     IMAGE_TEXT = "image_text"
+    SUMMARY = "summary"  # resumen del lector en cuarentena (Dual-LLM); sigue siendo no confiable
 
 
 class ExtractedRecord(_Strict):

@@ -54,6 +54,7 @@ ejecuta un intérprete de Python, sin LLM.
 | Verificador de procedencia | valor normalizado ∈ texto visible | No |
 | Señal de inyección (telemetría) | coseno de n-gramas contra prototipos | No |
 | Writer (E1) | plantilla determinista por tipo de reporte; LLM opcional solo para redacción, sin ver L0 | Opcional (0–1) |
+| Lector en cuarentena (E2, Dual-LLM) | solo si el usuario pide "resume"; extractivo determinista o Q-LLM sin herramientas → handle `summary` que solo ve el humano | Condicional (0–1 por documento) |
 | Drift plan vs prompt | reglas verbo → `ActionType` | No |
 | Drift diff vs objetivo | AST de Python + coseno de n-gramas | No |
 
@@ -164,8 +165,12 @@ así que el 0.63 está inflado; no hay que venderlo como tasa de detección gene
 ## 5. Contrato a acordar con Ciberseguridad
 
 Ya aplicado (aditivo, revisar con Ciber): `AuditKind.INJECTION_SIGNAL` para la telemetría
-de la Aduana y `PlanStep.inputs` (aristas del DAG, por defecto `()`). Los tests del broker
-siguen en verde.
+de la Aduana, `PlanStep.inputs` (aristas del DAG, por defecto `()`) y `TextField.SUMMARY`
+(resumen del lector en cuarentena). Los tests del broker siguen en verde.
+
+Riesgos residuales del Dual-LLM (P4): ingeniería social al humano vía el resumen (mitigado:
+bloque citado, sin links ni HTML, URLs desactivadas) y que el reporte contenga texto L0 (no
+debe volver a pasarse a un LLM con herramientas).
 
 Pendiente: en M3 la búsqueda devuelve sus resultados solo como handle `body`. Para planear
 "busca X y abre el primer resultado" hace falta un campo tipado de URLs en
@@ -199,6 +204,7 @@ de alcance: OCR/VLM, LLM para redactar en E1 y embeddings (trabajo futuro).
 | M3 | `customs.py`: parseo visible/oculto, extractores, señal de inyección | `pytest tests/test_customs.py` | ✅ 23 tests (142 en total) |
 | M4 | Planner (LLM + fallback por reglas) + validator + intérprete DAG + `vault_worker` | `python main.py --mock` | ✅ 13 tests; demo: ASR 0/4, utilidad 3/3, 0 llamadas LLM |
 | M5 | `intent_drift.py` (plan + AST/coseno) + set etiquetado de diffs | `pytest tests/test_intent_drift.py` · `python -m eval.drift_eval` | ✅ TPR 100% / FPR 0% en 24 diffs propios (sesgado: set y monitor escritos juntos; d01/d11 justo en el umbral 0.5) |
+| M5b | Dual-LLM: lector en cuarentena (`ml/summarizer.py`), handle `summary`, render inerte en el reporte | `pytest tests/test_summarizer.py` | ✅ 165 tests; un Q-LLM secuestrado solo produce texto citado y sin links |
 | M6 | Live con Ollama local: Planner real; D contra el baseline A de Ciber | `python main.py --live` | ⬜ |
 | M7 | Matriz A vs D: ASR, utilidad, falsos bloqueos, **latencia, llamadas LLM** | `python eval/run_matrix.py --live` | ⬜ |
 

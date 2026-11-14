@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..broker import CapabilityBroker
 from ..contracts import (
     ActionType, AuditKind, CapabilityToken, DocType, DriftVerdict, EnclaveId, ExtractedRecord, PlanStep,
-    ToolCall, ToolName, WorkerReceipt,
+    TextField, ToolCall, ToolName, WorkerReceipt,
 )
 from ..llm import BaseLLM, LLMError, dumps_schema
 from ..quarantine import QuarantineStore, amounts_in, defang
@@ -95,7 +95,13 @@ class VaultWorker:
                 lines.append(f"  - Campos descartados (procedencia/esquema): {', '.join(rec.dropped_fields)}")
             if rec.step_id in flagged_steps:
                 lines.append("  - Alerta: posible prompt injection en la fuente (contenido en cuarentena)")
+            summary = rec.text_handles.get(TextField.SUMMARY)
+            if summary is not None:
+                lines.append("  - Resumen del lector en cuarentena (no verificado, ningún LLM con permisos lo leyó):")
+                lines += ["    " + line for line in self.store.render_safe(summary).splitlines()]
             for field, handle in rec.text_handles.items():
+                if field is TextField.SUMMARY:
+                    continue
                 meta = self.store.meta(handle)
                 lines.append(f"  - Contenido externo en cuarentena, no leído por ningún LLM: "
                              f"{handle} ({field.value}, {meta.length} caracteres)")

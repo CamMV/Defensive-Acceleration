@@ -43,6 +43,12 @@ _REPORT_VERB = re.compile(r"\b(reporte|report|informe)\b", re.IGNORECASE)
 _SEARCH_VERB = re.compile(r"\b(busca|buscar|search)\b", re.IGNORECASE)
 _CODE_VERB = re.compile(r"\b(actualiza|actualizar|update|parchea|patch|corrige|fix|cambia|change)\b", re.IGNORECASE)
 _CODE_FILE = re.compile(r"\b(?:internal_workspace/)?([\w\-]+\.py)\b")
+_SUMMARY_VERB = re.compile(r"\b(resume|resumen|resumir|summari[sz]e|summary)\b", re.IGNORECASE)
+
+
+def wants_summary(prompt: str) -> bool:
+    """¿El usuario pidió un resumen? Se decide sobre el prompt confiable, nunca sobre datos."""
+    return bool(_SUMMARY_VERB.search(prompt))
 
 
 # --------------------------------------------------------------------------- #

@@ -29,6 +29,7 @@ from ..contracts import (
 from ..ml.extractors import RegexExtractor, looks_like_invoice
 from ..ml.html_split import SplitDocument, split_html
 from ..ml.injection_signal import InjectionScorer, InjectionSignal
+from ..ml.summarizer import Summarizer
 from ..quarantine import ProvenanceVerifier, QuarantineStore
 from ..tools.web_tools import IMAGE_DATA_PREFIX
 
@@ -65,13 +66,15 @@ class CustomsEnclave:
 
     def __init__(self, broker: CapabilityBroker, store: QuarantineStore,
                  verifier: Optional[ProvenanceVerifier] = None, extractor: Optional[RegexExtractor] = None,
-                 scorer: Optional[InjectionScorer] = None, image_reader: Optional[ImageReader] = None) -> None:
+                 scorer: Optional[InjectionScorer] = None, image_reader: Optional[ImageReader] = None,
+                 summarizer: Optional[Summarizer] = None) -> None:
         self.broker = broker
         self.store = store
         self.verifier = verifier or ProvenanceVerifier(broker.session_id, broker.audit)
         self.extractor = extractor or RegexExtractor()
         self.scorer = scorer or InjectionScorer()
         self.image_reader = image_reader or NullImageReader()
+        self.summarizer = summarizer  # lector en cuarentena (Dual-LLM); None = no resume
         self.signals: dict[str, InjectionSignal] = {}  # telemetría por paso (para métricas)
 
     # -- herramientas ------------------------------------------------------- #
@@ -95,7 +98,7 @@ class CustomsEnclave:
 
     # -- paso ---------------------------------------------------------------- #
 
-    def run_step(self, step: PlanStep, token: Optional[CapabilityToken]) -> ExtractedRecord:
+    def run_step(self, step: PlanStep, token: Optional[CapabilityToken], summarize: bool = False) -> ExtractedRecord:
         enclave, tool, _ = ACTION_ROUTING[step.action]
         if enclave is not self.enclave:
             raise StepDenied(step.step_id, "action_not_for_customs")
@@ -117,6 +120,11 @@ class CustomsEnclave:
         handles: dict[TextField, str] = {}
         if doc.visible_text:
             handles[TextField.BODY] = self.store.put(doc.visible_text, step_id=step.step_id, field=TextField.BODY)
+        if summarize and self.summarizer is not None and doc.visible_text:
+            # Dual-LLM: el lector en cuarentena ve el texto visible; su salida es otro handle.
+            summary = self.summarizer.summarize(doc.visible_text)
+            if summary:
+                handles[TextField.SUMMARY] = self.store.put(summary, step_id=step.step_id, field=TextField.SUMMARY)
         image_count = len(doc.image_srcs)
         if tool is ToolName.FETCH_URL and doc.image_srcs:
             image_text = self._read_images(step, doc)
