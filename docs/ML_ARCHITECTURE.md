@@ -162,10 +162,14 @@ B/C).
 
 Cada fase termina con: tests en verde → ✅ en esta tabla → commit local.
 
+Ajuste por tiempo (quedan ~5 h): sin entrenamiento ni fine-tuning de ningún modelo. El
+Planner usa un LLM instruct tal cual o, si no hay endpoint, el planner por reglas. Fuera
+de alcance: OCR/VLM, LLM para redactar en E1 y embeddings (trabajo futuro).
+
 | Fase | Entregable | Prueba | Estado |
 |---|---|---|---|
 | M0 | Este documento + acordar `PlanStep.inputs` | revisión con Ciber | 🟡 doc listo, falta acuerdo |
-| M1 | `llm.py` (cliente, `MockLLM`, métricas) + `ml/vectors.py` | `pytest tests/test_llm.py tests/test_vectors.py` | ⬜ |
+| M1 | `llm.py` (cliente, `MockLLM`, métricas) + `ml/vectors.py` | `pytest tests/test_llm.py tests/test_vectors.py` | ✅ 17 tests (98 en total) |
 | M2 | `quarantine.py`: store, handles, procedencia + normalizadores | `pytest tests/test_quarantine.py` | ⬜ |
 | M3 | `customs.py`: parseo visible/oculto, extractores, señal de inyección | `pytest tests/test_customs.py` | ⬜ |
 | M4 | Planner (LLM + fallback por reglas) + validator + intérprete DAG + `vault_worker` | `python main.py --mock` | ⬜ |
