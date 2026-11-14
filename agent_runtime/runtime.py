@@ -11,7 +11,7 @@ import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import httpx
 
@@ -72,7 +72,9 @@ def _read_jsonl(path: Path, skip: int = 0) -> list[dict[str, Any]]:
 def build_defended_system(config: DefenseConfig, session_id: str, vault_dir: Path, audit: AuditLog,
                           web: WebTools, user_prompt: str, mock: bool, seed: int,
                           drift_monitor: Optional[IntentDriftMonitor] = None,
-                          ocr: Optional[OcrFn] = None) -> tuple[Orchestrator, list[LLMClient]]:
+                          ocr: Optional[OcrFn] = None,
+                          llm_factory: Callable[[str, bool, int], LLMClient] = make_llm,
+                          ) -> tuple[Orchestrator, list[LLMClient]]:
     """Cablea broker + 3 enclaves. Cada enclave recibe su propia instancia de LLM."""
     broker = CapabilityBroker(session_id, vault_dir, audit, config)
     broker.register_tool(ToolName.READ_FILE, local_tools.read_file)
@@ -82,7 +84,7 @@ def build_defended_system(config: DefenseConfig, session_id: str, vault_dir: Pat
     broker.register_tool(ToolName.WEB_SEARCH, web.web_search)
     quarantine = QuarantineStore(session_id, audit)
     drift = (drift_monitor or BaselineDriftMonitor()) if config.customs_ml else None
-    llms = [make_llm(role, mock, seed) for role in ("orchestrator", "customs", "vault_worker")]
+    llms = [llm_factory(role, mock, seed) for role in ("orchestrator", "customs", "vault_worker")]
     # Doble chequeo (regex de main + Galvanize-3) e imágenes transcritas por WARD-2b (agent_runtime/ml/).
     # Sin los modelos: solo la regex y sin lectura de imágenes. Ambos se cargan una vez por proceso.
     ocr = ocr or default_image_reader() or no_ocr
@@ -122,8 +124,14 @@ def warmup_models() -> dict[str, Any]:
 
 
 def run_session(config_name: "str | DefenseConfig", prompt: str, run_dir: Path, audit: AuditLog, session_id: str,
-                mock: bool = True, seed: int = 0, use_http: bool = False, ocr: Optional[OcrFn] = None) -> RunOutcome:
-    """Ejecuta un prompt bajo una configuración (A-D) sobre una copia fresca de la bóveda."""
+                mock: bool = True, seed: int = 0, use_http: bool = False, ocr: Optional[OcrFn] = None,
+                llm_factory: Callable[[str, bool, int], LLMClient] = make_llm,
+                pages: Optional[dict[str, str]] = None, assets: Optional[dict[str, bytes]] = None) -> RunOutcome:
+    """Ejecuta un prompt bajo una configuración (A-D) sobre una copia fresca de la bóveda.
+
+    `llm_factory`, `pages` y `assets` son ganchos del benchmark de extremo a extremo
+    (eval/benchmark/e2e.py): otro LLM simulado y documentos extra en el servidor en proceso.
+    """
     config = CONFIGS[config_name] if isinstance(config_name, str) else config_name
     session_dir = run_dir / session_id
     vault_dir = session_dir / "vault"
@@ -137,7 +145,7 @@ def run_session(config_name: "str | DefenseConfig", prompt: str, run_dir: Path, 
         client: httpx.Client = http_client()
     else:  # en proceso: sin sockets
         attacker_log, skip = session_dir / "attacker_log.jsonl", 0
-        client = inprocess_client(create_app(attacker_log))
+        client = inprocess_client(create_app(attacker_log, pages=pages, assets=assets))
     web = WebTools(client)
 
     error: Optional[str] = None
@@ -147,12 +155,12 @@ def run_session(config_name: "str | DefenseConfig", prompt: str, run_dir: Path, 
     try:
         if config.privilege_separation:
             orchestrator, llms = build_defended_system(config, session_id, vault_dir, audit, web, prompt, mock, seed,
-                                                           ocr=ocr)
+                                                           ocr=ocr, llm_factory=llm_factory)
             system_canaries = [orchestrator.system_canary, orchestrator._customs.system_canary,
                                orchestrator._worker.system_canary]
             orchestrator.run(prompt)
         else:
-            llms = [make_llm("baseline", mock, seed)]
+            llms = [llm_factory("baseline", mock, seed)]
             agent = MonolithicAgent(llms[0], vault_dir, web, audit, session_id)
             system_canaries = [agent.system_canary]
             agent.run(prompt)

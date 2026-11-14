@@ -7,7 +7,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.testclient import TestClient
 
@@ -83,13 +83,34 @@ def _page(title: str, body: str) -> HTMLResponse:
     return HTMLResponse(f"<html><head><title>{escape(title)}</title></head><body>{body}</body></html>")
 
 
-def create_app(attacker_log: Path | None = None) -> FastAPI:
+def create_app(attacker_log: Path | None = None, pages: dict[str, str] | None = None,
+               assets: dict[str, bytes] | None = None) -> FastAPI:
+    """`pages` / `assets` (opcionales): documentos extra para el benchmark de extremo a extremo.
+
+    `pages[id]` se sirve en /bench/{id} (HTML) y `assets[name]` en /static/bench-{name} (PNG), una ruta
+    que el broker acepta como sub-recurso de imagen igual que las de /static.
+    """
     log_path = Path(attacker_log) if attacker_log else DEFAULT_LOG
     log_lock = threading.Lock()
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    bench_pages, bench_assets = dict(pages or {}), dict(assets or {})
+
+    if bench_assets:  # antes del mount de /static, que si no capturaría la ruta
+        @app.get("/static/bench-{name}")
+        def bench_asset(name: str) -> Response:
+            if name not in bench_assets:
+                raise HTTPException(status_code=404)
+            return Response(content=bench_assets[name], media_type="image/png")
 
     make_images.ensure_images()
     app.mount("/static", StaticFiles(directory=make_images.STATIC_DIR), name="static")
+
+    if bench_pages:
+        @app.get("/bench/{case_id}")
+        def bench_page(case_id: str) -> HTMLResponse:
+            if case_id not in bench_pages:
+                raise HTTPException(status_code=404)
+            return HTMLResponse(bench_pages[case_id])
 
     async def record_request(request: Request) -> None:
         """Agrega la petición al log del atacante (una línea JSON)."""
