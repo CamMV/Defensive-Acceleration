@@ -46,6 +46,10 @@ PATH_POLICY: dict[tuple[EnclaveId, Operation], frozenset[Label]] = {
     (EnclaveId.VAULT_WORKER, Operation.WRITE): frozenset({Label.L1}),
     (EnclaveId.CUSTOMS, Operation.READ): frozenset({Label.L0}),
 }
+# Herramientas adicionales que un tipo de paso habilita sobre su mismo destino.
+STEP_EXTRA_TOOLS: dict[ActionType, frozenset[ToolName]] = {
+    ActionType.PATCH_CODE: frozenset({ToolName.READ_FILE}),  # leer el archivo antes de parchearlo
+}
 SUBRESOURCE_TARGET = re.compile(r"^127\.0\.0\.1:8000/static/[\w.\-]{1,80}$")
 _WINDOWS_RESERVED = re.compile(r"^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$", re.IGNORECASE)
 _CANARY_RE = re.compile(CANARY_PATTERN)
@@ -186,6 +190,7 @@ class CapabilityBroker:
         self._context: dict[EnclaveId, Label] = {enclave: Label.L0 for enclave in EnclaveId}
         self._file_labels: dict[str, Label] = {}
         self._call_seq = 0
+        self._last_target: Optional[str] = None
         self.canaries = self._load_canaries()
         self.egress = EgressMonitor(self.canaries, coverage_threshold=0.75)
         audit.write(session_id, AuditKind.SESSION_START, config=config.model_dump(),
@@ -237,9 +242,15 @@ class CapabilityBroker:
                          single_use=single_use, ttl=ttl)
         return token
 
-    def mint_for_step(self, step: PlanStep, ttl: float = DEFAULT_TTL_SECONDS) -> Optional[CapabilityToken]:
+    def mint_for_step(self, step: PlanStep, ttl: float = DEFAULT_TTL_SECONDS,
+                      tool: Optional[ToolName] = None) -> Optional[CapabilityToken]:
         """Emite el token de un paso. Con plan congelado, el paso debe ser idéntico al registrado."""
-        enclave, tool, _ = ACTION_ROUTING[step.action]
+        enclave, default_tool, _ = ACTION_ROUTING[step.action]
+        tool = tool or default_tool
+        if tool is not default_tool and tool not in STEP_EXTRA_TOOLS.get(step.action, frozenset()):
+            self.audit.write(self.session_id, AuditKind.BROKER_DECISION, enclave=enclave.value,
+                             tool=tool.value, allowed=False, rule="tool_not_in_step", step_id=step.step_id)
+            return None
         if self._plan is not None and self._plan.frozen and step not in self._plan.steps:
             self.audit.write(self.session_id, AuditKind.BROKER_DECISION, enclave=enclave.value,
                              tool=tool.value, allowed=False, rule="step_not_in_plan",
@@ -301,6 +312,7 @@ class CapabilityBroker:
                          call_id=call.call_id, token_id=call.token.token_id if call.token else None,
                          args={key: redact(value) for key, value in call.args.items()},
                          args_sha256=hashlib.sha256(json.dumps(call.args, sort_keys=True).encode()).hexdigest())
+        self._last_target = None
         decision, runner, label = self._decide(call)
         output: Optional[str] = None
         if decision.allowed and runner is not None:
@@ -314,6 +326,7 @@ class CapabilityBroker:
         self.audit.write(self.session_id, AuditKind.BROKER_DECISION, enclave=enclave.value, tool=call.tool,
                          allowed=decision.allowed, rule=decision.rule, call_id=call.call_id,
                          reason=decision.reason, step_id=call.token.step_id if call.token else None,
+                         target=redact(self._last_target) if self._last_target else None,
                          label=label.name if decision.allowed and label is not None else None)
         return ToolResult(call_id=call.call_id, decision=decision, output=output,
                           label=label if decision.allowed else None)
@@ -364,6 +377,7 @@ class CapabilityBroker:
                 target = net_target(call.args["url"]) if tool is ToolName.FETCH_URL else search_target(call.args["query"])
             except UrlNotAllowed as exc:
                 return self._deny("host_not_allowed", str(exc))
+            self._last_target = target
             if not _scope_matches(target, token.scope):
                 return self._deny("token_scope_mismatch", "network target outside token scope")
             self._used.add(token.token_id)
@@ -380,6 +394,7 @@ class CapabilityBroker:
         except PathViolation as violation:
             return self._deny(violation.rule, violation.reason)
         operation = TOOL_OPERATION[tool]
+        self._last_target = relative
         if dir_label not in PATH_POLICY.get((enclave, operation), frozenset()):
             return self._deny("path_level_not_allowed",
                               f"{enclave.value} may not {operation.value} {dir_label.name}")
