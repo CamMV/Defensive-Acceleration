@@ -1,7 +1,13 @@
-# Dependencias OPCIONALES de la etapa 2 de reconocimiento (Sentinel de Hugging Face).
-# Sin ellas el sistema funciona con la etapa 1 (SENTINEL_MODE=auto cae al escáner híbrido).
-# torch con CUDA (GPU NVIDIA):
-#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+# Dependencias OPCIONALES de los modelos de Hugging Face que corren en proceso:
+#   - Galvanize-3 (usezn/Galvanize-3): clasificador de inyección, ~140 M parámetros.
+#   - WARD-2b (tricao1105/WARD-2b): VLM de 2B que transcribe el texto de las imágenes.
+# Sin ellas el sistema funciona solo con la regex de main y sin leer imágenes (modo auto).
+# torch con CUDA (GPU NVIDIA; las RTX 50xx necesitan CUDA >= 12.8):
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 torch
-transformers>=4.51
+torchvision
+transformers>=4.57
+accelerate
+flash-linear-attention  # kernels rápidos para WARD-2b (opcional; sin él usa la ruta de PyTorch)
 safetensors
+pillow

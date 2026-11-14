@@ -4,7 +4,7 @@ A · documentos reales del repo: páginas del servidor de pruebas (HTML crudo, c
     Aduana) y archivos de untrusted_inbox (txt, md, pdf, docx, pptx). Etiqueta a nivel documento.
 B · eval/injection_heldout.yaml: frases escritas a mano con estilos fuera de las plantillas.
 
-Ablación: heurística de main vs. clasificador entrenado vs. híbrido.
+Ablación: regex de main vs. Galvanize-3 vs. doble chequeo (eval/eval_galvanize.py).
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from typing import Callable
 
 import yaml
 
-from agent_runtime.ml.classifier import auroc, rates
+from eval.metrics import auroc, rates
 from agent_runtime.monitors.injection_scanner import MALICIOUS_THRESHOLD, SUSPICIOUS_THRESHOLD, InjectionScanner
 from agent_runtime.textutil import read_document
 from test_server.app import create_app, inprocess_client

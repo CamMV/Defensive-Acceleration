@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import re
 import secrets
+import time
 from typing import Any, Callable, Optional
 from urllib.parse import urljoin
 
@@ -55,8 +56,9 @@ _FORGED_MARKER = re.compile(r"\[DATA_(?:START|END)_\w*\]", re.IGNORECASE)
 
 def no_ocr(image_bytes: bytes) -> str:
     """Baseline sin OCR: el texto que solo existe en imágenes no se lee (ni se obedece)."""
-    # ML-TEAM: implementar OCR/VLM aquí y pasarlo como `ocr=` al construir `Customs`
-    #   (ver `runtime.build_defended_system`).
+    # ML-TEAM: implementado en `agent_runtime/ml/ward.py` (WARD-2b transcribe la imagen) y
+    #   conectado en `runtime.build_defended_system`. El texto transcrito pasa por el mismo
+    #   escáner que el documento (regex + Galvanize-3) antes de usarse.
     #   Entrada: bytes de la imagen (PNG/JPEG, <= 400 kB) descargada con token de sub-recurso.
     #   Salida:  str con el texto reconocido ("" si no hay). Trátalo como NO confiable:
     #            este módulo lo manda a cuarentena (TextField.IMAGE_TEXT) y lo usa como
@@ -86,28 +88,43 @@ class Customs(Enclave):
         if not result.decision.allowed or result.output is None:
             return self._failure(step, result.decision.rule)
         raw = result.output
-        blocked = self._scan(step, raw)
+        scan = self._scan(step, raw)
+        blocked = scan is not None and scan.verdict == "malicious"
         if not self._config.customs_ml:
             if blocked:
                 return FreeTextResult(step_id=step.step_id, text="[blocked: injection_scan]", label=Label.L0)
             return self._legacy_summary(step, raw)
-        return self._structured_record(step, raw, blocked)
+        # Imágenes: el lector (WARD-2b) transcribe y el texto pasa por el MISMO doble chequeo que el
+        # documento. Si el documento ya está bloqueado no se descargan (menos superficie y latencia).
+        image_text = "" if blocked else self._read_images(step, raw)
+        if image_text.strip():
+            image_scan = self._scan(step, image_text, channel="image")
+            if image_scan is not None and image_scan.verdict == "malicious":
+                blocked = True
+                image_text = mask_spans(image_text, image_scan.spans)
+        return self._structured_record(step, raw, blocked, image_text)
 
     # -- escáner y datamarking -------------------------------------------------- #
 
-    def _scan(self, step: PlanStep, raw: str) -> bool:
-        """Escanea el documento crudo ANTES de exponerlo al LLM. True = veredicto malicioso."""
+    def _scan(self, step: PlanStep, raw: str, channel: str = "document") -> Optional[ScanResult]:
+        """Escanea texto no confiable ANTES de exponerlo al LLM. None = escáner desactivado.
+
+        `channel`: "document" (el documento crudo) o "image" (texto transcrito de sus imágenes).
+        """
         if self._scanner is None:
-            return False
+            return None
+        started = time.perf_counter()
         result: ScanResult = self._scanner.scan_document(raw, step.target)
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
         blocked = result.verdict == "malicious"
         # Se auditan score, veredicto y reglas; nunca el texto de los spans.
         self.broker.audit.write(self.broker.session_id, AuditKind.INJECTION_SCAN, enclave=self.enclave_id.value,
                                 allowed=not blocked, rule="injection_scan_malicious" if blocked else "allow",
                                 step_id=step.step_id, source=redact(step.target, 200), score=result.score,
                                 verdict=result.verdict, spans=len(result.spans),
-                                rules=sorted({span.rule for span in result.spans}))
-        return blocked
+                                rules=sorted({span.rule for span in result.spans}), channel=channel,
+                                elapsed_ms=elapsed_ms)
+        return result
 
     def _datamark(self, text: str) -> str:
         """Envuelve texto no confiable con delimitadores; elimina delimitadores falsificados."""
@@ -142,10 +159,11 @@ class Customs(Enclave):
 
     # -- modo D: registro tipado + handles ------------------------------------ #
 
-    def _structured_record(self, step: PlanStep, raw: str, blocked: bool = False) -> ExtractedRecord:
+    def _structured_record(self, step: PlanStep, raw: str, blocked: bool = False,
+                           image_text: str = "") -> ExtractedRecord:
         visible = visible_text(raw)
-        image_text = self._read_images(step, raw)
-        source_text = f"{visible}\n{image_text}"
+        # Texto de imagen bloqueado (enmascarado) no sirve como fuente de procedencia.
+        source_text = visible if blocked else f"{visible}\n{image_text}"
 
         # ML-TEAM: extracción estructurada. Hoy: un LLM de texto + regex de respaldo.
         #   Entrada: `raw` (HTML/markdown crudo, NO confiable) y, si conectan VLM, las imágenes.

@@ -25,7 +25,8 @@ from .enclaves.orchestrator import Orchestrator
 from .enclaves.vault_worker import VaultWorker
 from .llm import LLMClient, make_llm
 from .monitors.egress import find_canaries
-from .ml.trained_scanner import default_scanner
+from .ml.scanner import default_scanner
+from .ml.ward import default_image_reader
 from .monitors.intent_drift import BaselineDriftMonitor, IntentDriftMonitor
 from .quarantine import QuarantineStore
 from .textutil import read_document
@@ -71,7 +72,7 @@ def _read_jsonl(path: Path, skip: int = 0) -> list[dict[str, Any]]:
 def build_defended_system(config: DefenseConfig, session_id: str, vault_dir: Path, audit: AuditLog,
                           web: WebTools, user_prompt: str, mock: bool, seed: int,
                           drift_monitor: Optional[IntentDriftMonitor] = None,
-                          ocr: OcrFn = no_ocr) -> tuple[Orchestrator, list[LLMClient]]:
+                          ocr: Optional[OcrFn] = None) -> tuple[Orchestrator, list[LLMClient]]:
     """Cablea broker + 3 enclaves. Cada enclave recibe su propia instancia de LLM."""
     broker = CapabilityBroker(session_id, vault_dir, audit, config)
     broker.register_tool(ToolName.READ_FILE, local_tools.read_file)
@@ -82,10 +83,42 @@ def build_defended_system(config: DefenseConfig, session_id: str, vault_dir: Pat
     quarantine = QuarantineStore(session_id, audit)
     drift = (drift_monitor or BaselineDriftMonitor()) if config.customs_ml else None
     llms = [make_llm(role, mock, seed) for role in ("orchestrator", "customs", "vault_worker")]
-    # Escáner híbrido (heurística + clasificador entrenado, agent_runtime/ml/); cae a la heurística si no hay modelo.
+    # Doble chequeo (regex de main + Galvanize-3) e imágenes transcritas por WARD-2b (agent_runtime/ml/).
+    # Sin los modelos: solo la regex y sin lectura de imágenes. Ambos se cargan una vez por proceso.
+    ocr = ocr or default_image_reader() or no_ocr
     customs = Customs(broker, llms[1], quarantine, config, user_prompt, drift, ocr, scanner=default_scanner())
     worker = VaultWorker(broker, llms[2], quarantine, config, user_prompt, drift)
     return Orchestrator(broker, llms[0], config, customs, worker), llms
+
+
+def warmup_models() -> dict[str, Any]:
+    """Carga Galvanize-3 y WARD-2b y corre una inferencia de prueba, FUERA del tiempo del flujo.
+
+    Devuelve qué quedó activo y cuánto tardó cada uno (la primera inferencia en GPU es lenta).
+    """
+    import io
+
+    from .ml.scanner import DualCheckInjectionScanner
+
+    status: dict[str, Any] = {}
+    started = time.perf_counter()
+    scanner = default_scanner()
+    if isinstance(scanner, DualCheckInjectionScanner):
+        scanner.scan_document("<p>Valor de la oferta: 455000000.00 COP, plazo de ocho meses.</p>", "warmup")
+    status["galvanize"] = isinstance(scanner, DualCheckInjectionScanner)
+    status["galvanize_s"] = round(time.perf_counter() - started, 2)
+    started = time.perf_counter()
+    reader = default_image_reader()
+    if reader is not None:
+        from PIL import Image, ImageDraw
+        image = Image.new("RGB", (320, 80), "white")
+        ImageDraw.Draw(image).text((10, 30), "Informe trimestral 2026", fill="black")
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        reader(buffer.getvalue())
+    status["ward"] = reader is not None
+    status["ward_s"] = round(time.perf_counter() - started, 2)
+    return status
 
 
 def run_session(config_name: "str | DefenseConfig", prompt: str, run_dir: Path, audit: AuditLog, session_id: str,
