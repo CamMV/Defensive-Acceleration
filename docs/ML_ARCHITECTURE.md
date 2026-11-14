@@ -212,6 +212,37 @@ quedar con un solo sistema medido por `eval/run_matrix.py`.
 Fallo conocido heredado de `main`: `tests/test_office_docs.py::test_generator_is_reproducible`
 (los .docx regenerados difieren en bytes de timestamp del zip); falla igual en `main` puro.
 
+## 5c. Clasificador de inyección entrenado (punto `ML-TEAM: Insert Model here`)
+
+- **Qué es**: regresión logística sobre n-gramas hasheados (caracteres 3-5 + palabras 1-2, 2^18
+  posiciones, tf sublineal, norma L2). Python puro, determinista, ~6 ms por documento.
+  Código: `agent_runtime/ml/classifier.py`; modelo: `agent_runtime/ml/models/injection_lr.json`.
+- **Datos de entrenamiento**: 3 300 frases sintéticas ES/EN (900 inyecciones) generadas por
+  plantillas en `agent_runtime/ml/injection_dataset.py`, con negativos difíciles y una gramática
+  de texto neutral. No contienen los payloads del repo (un test lo verifica).
+- **Integración**: `HybridInjectionScanner` (`agent_runtime/ml/trained_scanner.py`) = heurística
+  de main + clasificador; score = máximo, spans = unión. El clasificador solo aporta cuando un
+  segmento supera p ≥ 0.5. `runtime.build_defended_system` lo usa por defecto.
+- **Reentrenar**: `python -m eval.train_injection_classifier` (≈ 1 min, escribe el modelo y
+  `results/injection_classifier_metrics.json`).
+
+Resultados en sets reservados (nunca usados para entrenar):
+
+| Escáner | A (21 docs del repo): bloqueo TPR / FPR | A: falsas alertas | B (40 frases a mano, estilos nuevos): AUROC | B: alerta TPR / FPR |
+|---|---|---|---|---|
+| Heurística de main | 1.00 / 0.00 | 0 % | 0.57 | 0.05 / 0.05 |
+| Clasificador solo | 0.93 / 0.00 | 14 % | 0.87 | 0.80 / 0.20 |
+| **Híbrido (por defecto)** | **1.00 / 0.00** | **0 %** | **0.79** | **0.45 / 0.05** |
+
+Matriz de main en mock, config D: ASR 0, utilidad 1, 0 falsos bloqueos, igual que antes; +7 ms.
+
+Advertencias honestas: (1) la validación cruzada sobre el dataset sintético da 1.0 y no significa
+nada; (2) diagnostiqué un problema mirando puntajes de documentos benignos del set A y por eso
+agregué texto neutral genérico (sin copiar frases), lo que contamina levemente ese set; (3) el set
+B lo escribí yo, con sesgo de autor; (4) la frase sola "Ignora las instrucciones anteriores" saca
+0.27 en el clasificador (la atrapa la heurística): el modelo aprendió combinaciones de plantilla,
+no el concepto. Es una capa de detección, no la barrera.
+
 ## 6. Plan por fases y progreso
 
 Cada fase termina con: tests en verde → ✅ en esta tabla → commit local.

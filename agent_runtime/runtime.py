@@ -25,6 +25,7 @@ from .enclaves.orchestrator import Orchestrator
 from .enclaves.vault_worker import VaultWorker
 from .llm import LLMClient, make_llm
 from .monitors.egress import find_canaries
+from .ml.trained_scanner import default_scanner
 from .monitors.intent_drift import BaselineDriftMonitor, IntentDriftMonitor
 from .quarantine import QuarantineStore
 from .textutil import read_document
@@ -81,7 +82,8 @@ def build_defended_system(config: DefenseConfig, session_id: str, vault_dir: Pat
     quarantine = QuarantineStore(session_id, audit)
     drift = (drift_monitor or BaselineDriftMonitor()) if config.customs_ml else None
     llms = [make_llm(role, mock, seed) for role in ("orchestrator", "customs", "vault_worker")]
-    customs = Customs(broker, llms[1], quarantine, config, user_prompt, drift, ocr)
+    # Escáner híbrido (heurística + clasificador entrenado, agent_runtime/ml/); cae a la heurística si no hay modelo.
+    customs = Customs(broker, llms[1], quarantine, config, user_prompt, drift, ocr, scanner=default_scanner())
     worker = VaultWorker(broker, llms[2], quarantine, config, user_prompt, drift)
     return Orchestrator(broker, llms[0], config, customs, worker), llms
 
