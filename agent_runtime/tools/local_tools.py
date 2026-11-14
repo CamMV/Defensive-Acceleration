@@ -5,11 +5,13 @@ Nunca resuelven rutas por su cuenta: quien las llame sin pasar por el broker
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from pathlib import Path
 
 from ..textutil import read_document
+from .web_tools import IMAGE_DATA_PREFIX, MAX_IMAGE_BYTES
 
 MAX_FILE_CHARS = 20_000
 
@@ -22,8 +24,24 @@ def read_file(path: Path) -> str:
     return read_document(path)[:MAX_FILE_CHARS]
 
 
+_IMAGE_MAGIC = {".png": (b"\x89PNG\r\n\x1a\n",), ".jpg": (b"\xff\xd8\xff",), ".jpeg": (b"\xff\xd8\xff",)}
+
+
 def read_inbox(path: Path) -> str:
-    return read_file(path)
+    """Archivo L0. Las imágenes (.png/.jpg) salen como data URI, igual que las imágenes web.
+
+    Así la Aduana las distingue del texto y las pasa por el mismo OCR/VLM. Falla cerrado si la
+    extensión no coincide con los bytes (p. ej. un ejecutable renombrado a .png) o si excede el tope.
+    """
+    suffix = path.suffix.lower()
+    if suffix not in _IMAGE_MAGIC:
+        return read_file(path)
+    if path.stat().st_size > MAX_IMAGE_BYTES:
+        raise ValueError("image too large")
+    data = path.read_bytes()
+    if not data.startswith(_IMAGE_MAGIC[suffix]):
+        raise ValueError("file content does not match its image extension")
+    return IMAGE_DATA_PREFIX + base64.b64encode(data).decode("ascii")
 
 
 def write_diff(path: Path, old: str, new: str) -> str:

@@ -86,12 +86,27 @@ class Customs(Enclave):
         if not result.decision.allowed or result.output is None:
             return self._failure(step, result.decision.rule)
         raw = result.output
+        image_text: Optional[str] = None
+        if raw.startswith(IMAGE_DATA_PREFIX):
+            # Imagen local (.png/.jpg de L0) o URL de imagen: mismo OCR/VLM que las imágenes web.
+            # El texto reconocido es NO confiable: reemplaza al documento y pasa por escáner,
+            # LLM en cuarentena, procedencia y QuarantineStore como cualquier otro texto L0.
+            image_text = self._ocr_bytes(raw)
+            raw = image_text
         blocked = self._scan(step, raw)
         if not self._config.customs_ml:
             if blocked:
                 return FreeTextResult(step_id=step.step_id, text="[blocked: injection_scan]", label=Label.L0)
             return self._legacy_summary(step, raw)
-        return self._structured_record(step, raw, blocked)
+        return self._structured_record(step, raw, blocked, image_text)
+
+    def _ocr_bytes(self, data_uri: str) -> str:
+        """OCR/VLM sobre los bytes de una imagen entregada por el broker (data URI)."""
+        try:
+            data = base64.b64decode(data_uri[len(IMAGE_DATA_PREFIX):], validate=True)
+        except ValueError:
+            return ""
+        return (self._ocr(data) or "")[:MAX_DOCUMENT_CHARS]
 
     # -- escáner y datamarking -------------------------------------------------- #
 
@@ -142,9 +157,14 @@ class Customs(Enclave):
 
     # -- modo D: registro tipado + handles ------------------------------------ #
 
-    def _structured_record(self, step: PlanStep, raw: str, blocked: bool = False) -> ExtractedRecord:
-        visible = visible_text(raw)
-        image_text = self._read_images(step, raw)
+    def _structured_record(self, step: PlanStep, raw: str, blocked: bool = False,
+                           local_image_text: Optional[str] = None) -> ExtractedRecord:
+        """`local_image_text` no es None cuando el archivo ES una imagen: `raw` es su texto OCR (no hay
+        texto visible ni subimágenes; el OCR solo puede aportar campos que el LLM proponga y la
+        procedencia verifique, nunca el extractor determinista)."""
+        from_image = local_image_text is not None
+        visible = "" if from_image else visible_text(raw)
+        image_text = local_image_text if from_image else self._read_images(step, raw)
         source_text = f"{visible}\n{image_text}"
 
         # ML-TEAM: extracción estructurada. Hoy: un LLM de texto + regex de respaldo.
@@ -158,7 +178,10 @@ class Customs(Enclave):
             # Veredicto malicioso: el LLM no ve el documento; solo corre el extractor determinista
             # y los tramos señalados se enmascaran antes de ir a cuarentena.
             assert self._scanner is not None
-            quarantined = mask_spans(visible, self._scanner.scan_document(visible, step.target).spans)
+            if from_image:
+                image_text = mask_spans(image_text, self._scanner.scan_document(image_text, step.target).spans)
+            else:
+                quarantined = mask_spans(visible, self._scanner.scan_document(visible, step.target).spans)
         else:
             reply = self._ask("customs_act", self._system_prompt(),
                               {"mode": "fields", "document": self._datamark(raw[:MAX_DOCUMENT_CHARS])})
@@ -181,13 +204,15 @@ class Customs(Enclave):
                 dropped.append(name)
                 self._audit(step, AuditKind.SCHEMA_DROP, "extractor_disagreement", name)
 
-        handles = {TextField.BODY: self._quarantine.put(self._datamark(quarantined), Label.L0, step.target,
-                                                        TextField.BODY.value)}
+        handles: dict[TextField, str] = {}
+        if not from_image:
+            handles[TextField.BODY] = self._quarantine.put(self._datamark(quarantined), Label.L0, step.target,
+                                                           TextField.BODY.value)
         if image_text.strip():
             handles[TextField.IMAGE_TEXT] = self._quarantine.put(self._datamark(image_text), Label.L0, step.target,
                                                                  TextField.IMAGE_TEXT.value)
         return ExtractedRecord(step_id=step.step_id, doc_type=self._doc_type(step, fields),
-                               image_count=min(len(image_sources(raw)), 50), text_handles=handles,
+                               image_count=1 if from_image else min(len(image_sources(raw)), 50), text_handles=handles,
                                dropped_fields=tuple(dict.fromkeys(dropped)), **fields)
 
     def _validated(self, step: PlanStep, proposed: dict[str, Any], dropped: list[str], origin: str) -> dict[str, Any]:

@@ -87,7 +87,7 @@ def build_defended_system(config: DefenseConfig, session_id: str, vault_dir: Pat
 
 
 def run_session(config_name: "str | DefenseConfig", prompt: str, run_dir: Path, audit: AuditLog, session_id: str,
-                mock: bool = True, seed: int = 0, use_http: bool = False) -> RunOutcome:
+                mock: bool = True, seed: int = 0, use_http: bool = False, ocr: OcrFn = no_ocr) -> RunOutcome:
     """Ejecuta un prompt bajo una configuración (A-D) sobre una copia fresca de la bóveda."""
     config = CONFIGS[config_name] if isinstance(config_name, str) else config_name
     session_dir = run_dir / session_id
@@ -111,7 +111,8 @@ def run_session(config_name: "str | DefenseConfig", prompt: str, run_dir: Path, 
     started = time.perf_counter()
     try:
         if config.privilege_separation:
-            orchestrator, llms = build_defended_system(config, session_id, vault_dir, audit, web, prompt, mock, seed)
+            orchestrator, llms = build_defended_system(config, session_id, vault_dir, audit, web, prompt, mock, seed,
+                                                           ocr=ocr)
             system_canaries = [orchestrator.system_canary, orchestrator._customs.system_canary,
                                orchestrator._worker.system_canary]
             orchestrator.run(prompt)
