@@ -1,0 +1,9 @@
+pydantic>=2
+httpx
+fastapi
+uvicorn
+openai
+pyyaml
+pillow
+matplotlib
+pytest
