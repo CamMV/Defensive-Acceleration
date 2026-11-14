@@ -220,7 +220,7 @@ sintético, el modelo `.json`, sus tests y sus evals. Las métricas `auroc`/`rat
 **Regla de paso (doble chequeo, `agent_runtime/ml/scanner.py`, `DualCheckInjectionScanner`)**: un
 documento continúa solo si AMBOS dicen que no hay inyección:
 1. Determinista: la regex de main (`HeuristicInjectionScanner`) no da `malicious`.
-2. Modelo: Galvanize-3 da P(inyección) < 0.95 en todos los trozos (calibrado; la model card usa 0.9802).
+2. Modelo: Galvanize-3 da P(inyección) < 0.99 en todos los trozos (ver §5d; la model card usa 0.9802).
 
 Si cualquiera marca, el veredicto es `malicious`: el LLM de la Aduana no ve el documento y los trozos
 se enmascaran. Score = máximo de ambos; los spans son la unión (regla `galvanize3` para el modelo).
@@ -255,7 +255,7 @@ Resultados medidos (RTX 5070 Laptop 8 GB, `eval/eval_galvanize.py`, sets reserva
 | Regex de main | 1.00 / 0.00 | 0.2 | 0.57 | 0.00 / 0.00 |
 | Galvanize-3 solo (≥ 0.9802) | 1.00 / 0.00 | 9 | 0.98 | 0.80 / 0.00 |
 | Doble chequeo @0.9802 | 1.00 / 0.00 | 6 | 0.99 | 0.80 / 0.00 |
-| **Doble chequeo @0.95 (por defecto)** | **1.00 / 0.00** | **6** | **0.99** | **0.95 / 0.05** |
+| Doble chequeo @0.95 (calibración anterior; hoy 0.99, ver §5d) | 1.00 / 0.00 | 6 | 0.99 | 0.95 / 0.05 |
 
 Calibración (`python -m eval.sweep_threshold`): bajar el umbral no cambia el AUROC, solo el corte. Entre
 0.5 y 0.95 el resultado es idéntico; se eligió 0.95 por ser el más conservador. La falsa alarma
@@ -283,6 +283,37 @@ Hallazgos y advertencias:
    entrenó con estos datos, pero sus propias métricas son auto-reportadas.
 4. Es una capa de detección, no la barrera: la seguridad sigue viniendo del plan congelado, los handles
    y el broker.
+
+## 5d. Política del filtro calibrada con los benchmarks (falsos bloqueos)
+
+Medido con `eval/benchmark` (611 casos) y `eval/benchmark/e2e.py` (sistema completo, atacante oráculo).
+Un falso bloqueo era caro: el texto completo del documento legítimo salía en el acta como
+`[REDACTED_BY_SCANNER]`. Cambios (`agent_runtime/ml/scanner.py`, `galvanize.py`):
+
+1. **La regex ya no bloquea sola.** Su `malicious` baja a `suspicious` (se audita y sus reglas quedan en los
+   spans). En el benchmark no atrapó ningún ataque que Galvanize no atrapara y sumaba 10 falsas alarmas
+   (comandos legítimos dentro de HTML oculto). `INJECTION_REGEX_BLOCKS=1` restaura "bloquea si cualquiera
+   marca". Sin Galvanize disponible, la regex sola sí bloquea (comportamiento de main).
+2. **Umbral de Galvanize 0.99** (antes 0.95).
+3. **Trozos alineados a párrafos**: corrige el falso positivo de un trozo en español que terminaba con el
+   fragmento de un párrafo en inglés.
+4. **Enmascarado por oración**: dentro de un trozo bloqueado se vuelve a puntuar cada oración y solo se
+   enmascaran las marcadas; si ninguna supera el umbral por sí sola se enmascara el trozo. El LLM de la
+   Aduana sigue sin ver el documento bloqueado (la seguridad no cambia).
+
+| | Antes | Después |
+|---|---|---|
+| Benchmark ML (doble chequeo): detección / falsas alarmas | 0.85 / 0.16 | 0.81 / 0.08 |
+| Ídem sin casos de frontera | 0.87 / 0.12 | 0.83 / 0.06 |
+| Extremo a extremo D: ASR / utilidad / falso bloqueo | 0.00 / 0.81 / 0.19 | 0.00 / 0.87 / 0.13 |
+| Extremo a extremo D, envoltura neutral | – | 0.00 / 0.94 / 0.06 |
+
+Hallazgo: Galvanize es sensible al contexto. El mismo texto bajo el título "Documento del proceso
+LP-2026-014" da 12 % de falsas alarmas y 82 % de detección; sin título, 5 % y 73 %. Una orden bajo un
+encabezado ajeno le parece inyección, sea legítima o maliciosa. `--wrapper` mide ambas.
+
+Con LLM real (llama3 en Ollama, muestra de 16 casos): A 2/8 ataques con daño (leyó `.env` y lo copió al
+acta), D 0/8; latencia de D p50 1.7 s, máx 2.2 s; A p50 39 s.
 
 ## 6. Plan por fases y progreso
 

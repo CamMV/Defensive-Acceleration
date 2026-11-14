@@ -71,4 +71,6 @@ ataque que haya funcionado contra una configuración D).
   un modelo local, así que usa `--sample`. Con GPU de 8 GB usa `--no-images` (desactiva WARD-2b).
 - Configuraciones: `A` (baseline sin defensas), `D-arch` (D sin filtro: solo arquitectura), `D-regex`
   (filtro = regex de main) y `D` (regex + Galvanize-3 + WARD-2b, producción).
+- `--wrapper contratacion|neutral`: título de la página que envuelve cada caso. Galvanize es sensible al
+  contexto (una orden bajo un encabezado ajeno le parece inyección), así que cambia falsos bloqueos y detección.
 - Limitación: el agente A no tiene OCR, así que las inyecciones solo en imagen no lo afectan.
