@@ -1,4 +1,4 @@
-# Agente Auditor de Confianza Cero — ficha técnica
+# Agente Auditor de Confianza Cero: defensa contra inyección indirecta en contratación pública
 
 **Frente 01: Agent Security · Equipo No Prompt, No Party** · Sergio Castaño, Angie Gutiérrez, Camilo Murcia, Santiago Gómez
 
