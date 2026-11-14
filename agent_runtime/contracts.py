@@ -153,6 +153,8 @@ class PlanStep(_Strict):
     action: ActionType
     target: Annotated[str, StringConstraints(min_length=1, max_length=2000)]
     origin: Literal["user_prompt", "replan"] = "user_prompt"
+    # Aristas del DAG: pasos anteriores cuyo output consume este paso (solo hacia atrás).
+    inputs: tuple[StepId, ...] = ()
     # Solo en modo reactivo (B/C): texto libre derivado de resultados. En D es None.
     payload: Optional[str] = None
 
@@ -238,6 +240,7 @@ class TextField(str, Enum):
     BODY = "body"
     NOTES = "notes"
     IMAGE_TEXT = "image_text"
+    SUMMARY = "summary"  # resumen del lector en cuarentena (Dual-LLM); sigue siendo no confiable
 
 
 class ExtractedRecord(_Strict):
@@ -333,6 +336,7 @@ class AuditKind(str, Enum):
     EXPOSURE = "exposure"
     INJECTION_SCAN = "injection_scan"
     INTERNAL_PROMPT_LEAKAGE = "internal_prompt_leakage"
+    INJECTION_SIGNAL = "injection_signal"  # telemetría de la Aduana ML (no bloquea)
 
 
 class AuditEvent(BaseModel):
