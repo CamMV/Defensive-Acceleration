@@ -1,0 +1,7 @@
+# Dependencias OPCIONALES de la etapa 2 de reconocimiento (Sentinel de Hugging Face).
+# Sin ellas el sistema funciona con la etapa 1 (SENTINEL_MODE=auto cae al escáner híbrido).
+# torch con CUDA (GPU NVIDIA):
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+torch
+transformers>=4.51
+safetensors
