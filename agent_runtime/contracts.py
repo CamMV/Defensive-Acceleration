@@ -309,6 +309,7 @@ class AuditKind(str, Enum):
     DRIFT_CHECK = "drift_check"
     EGRESS_ALERT = "egress_alert"
     EXPOSURE = "exposure"
+    INJECTION_SIGNAL = "injection_signal"  # telemetría de la Aduana (no bloquea)
 
 
 class AuditEvent(BaseModel):
