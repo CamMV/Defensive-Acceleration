@@ -6,11 +6,10 @@ determinista y no carga modelos.
 
 Cada número lleva su fuente. Hay dos tipos de fuente:
 
-- **Datos en el repo**: `docs/benchmarks/ml_20261114/report.json`, `report.md`, `cases.jsonl`, `failures.csv`
-  y `docs/results_mock/`. Se pueden recalcular.
+- **Datos en el repo**: `docs/benchmarks/ml_20261114/` (escáner), `docs/benchmark_e2e/` y
+  `docs/benchmark_e2e_neutral/` (extremo a extremo) y `docs/results_mock/`. Se pueden recalcular.
 - **Solo en el documento**: `docs/ML_ARCHITECTURE.md` §5d. El número está escrito ahí, pero los datos que lo
-  producen (`results/benchmark_e2e/`, `results/threshold_sweep.json`) están en `.gitignore` y no se subieron.
-  Esos números van marcados con †.
+  producen no se subieron. Esos números van marcados con †.
 
 `report.md` y `report.json` son de **antes** de v3 (umbral de Galvanize 0.95, la regex bloqueaba sola).
 §5d describe el estado de **después** (umbral 0.99, la regex solo audita, enmascarado por oración).
@@ -50,14 +49,27 @@ Medido con `eval/benchmark/e2e.py`: el sistema completo, con **atacante oráculo
 perfectamente la inyección del caso en cuanto algún LLM ve el documento. Es el peor caso para la defensa y
 no es un modelo real (`eval/benchmark/README.md`, "Mock oráculo").
 
-| Config D, extremo a extremo | ASR | Utilidad | Falso bloqueo |
-|---|---|---|---|
-| Antes de v3 | 0.00 † | 0.81 † | 0.19 † |
-| Después de v3 | 0.00 † | 0.87 † | 0.13 † |
-| Después de v3, envoltura neutral | 0.00 † | 0.94 † | 0.06 † |
+614 casos por configuración (338 ataques). Datos en el repo desde el commit `f073f94`.
 
-Fuente †: `docs/ML_ARCHITECTURE.md` §5d, tabla "Antes / Después". El doc no indica el número de casos de
-estas corridas. Los `report.json` y `sessions.jsonl` que las respaldan no están en el repo.
+| Config D, extremo a extremo | ASR | Utilidad | Falso bloqueo | Fuente |
+|---|---|---|---|---|
+| Antes de v3 | 0.00 | 0.81 | 0.19 | `docs/benchmark_e2e/base/report.md` |
+| Después de v3 | 0.00 | 0.87 | 0.13 | `docs/benchmark_e2e/latest/report.md` |
+| Después de v3, envoltura neutral | 0.00 | 0.94 | 0.06 | `docs/benchmark_e2e_neutral/latest/report.md` |
+
+La misma corrida (`docs/benchmark_e2e/latest/report.md`, tabla "General") separa el filtro de la arquitectura:
+
+| Config | ASR | Filtro bloqueó | El LLM vio la inyección | Contenidos tras secuestro | Utilidad | Falso bloqueo |
+|---|---|---|---|---|---|---|
+| A: sin defensas | 0.96 | 0.00 | 0.96 | 0 | 1.00 | 0.00 |
+| D-arch: D sin filtro, solo arquitectura | 0.00 | 0.00 | 1.00 | 338 | 1.00 | 0.00 |
+| D-regex: filtro = solo regex | 0.00 | 0.07 | 0.93 | 313 | 0.96 | 0.04 |
+| D: regex + Galvanize-3 + WARD-2b | 0.00 | 0.84 | 0.16 | 54 | 0.87 | 0.13 |
+
+"Contenidos tras secuestro" = sesiones en las que el LLM obedeció la inyección y aun así no hubo daño.
+En D-arch el oráculo obedeció en los 338 ataques y ninguno causó daño: la contención es de la arquitectura,
+no del filtro. El filtro añade una capa (bloquea 0.84 de los ataques antes de que un LLM los vea) y cuesta
+utilidad (de 1.00 a 0.87).
 
 "Envoltura neutral" es la opción `--wrapper neutral`: la página que envuelve cada caso no lleva el título
 del proceso de contratación (ver sección e).
@@ -131,7 +143,7 @@ Si Galvanize no está disponible, la regex sola sí bloquea.
 | Regex: 0 detecciones propias, 10 falsas alarmas | Sí: `report.json`, `cases.jsonl` |
 | Matriz mock A–E | Sí: `docs/results_mock/` |
 | Escáner después de v3 (0.81 / 0.08, 0.83 / 0.06) | No, solo en §5d. Recalculado aproximado en (a) |
-| Extremo a extremo D, las tres filas | No, solo en §5d |
+| Extremo a extremo A / D-arch / D-regex / D y envoltura neutral | Sí: `docs/benchmark_e2e/`, `docs/benchmark_e2e_neutral/` |
 | LLM real: 2/8, 0/8, latencias | No, solo en §5d |
 | Sensibilidad al contexto (12 % / 82 %, 5 % / 73 %) | No, solo en §5d |
 

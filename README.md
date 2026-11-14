@@ -168,3 +168,21 @@ Cambios respecto a la estructura objetivo, con su razón:
   externo o un contraste casi igual las evade.
 - **Uso dual.** Los payloads son genéricos y de demostración, apuntan solo al servidor local y no incluyen
   técnicas de evasión contra productos reales. La allowlist de `web_tools.py` impide que el red-team salga de `127.0.0.1:8000`.
+
+## Resultados y ficha técnica
+
+- [`docs/PITCH.md`](docs/PITCH.md): ficha técnica de 2 páginas (amenaza, arquitectura, metodología, resultados, limitaciones, uso dual).
+- [`docs/RESULTS.md`](docs/RESULTS.md): todos los números medidos, cada uno con el archivo del que sale.
+- `docs/benchmark_e2e/`, `docs/benchmarks/`: datos crudos de los benchmarks.
+
+## Atribución
+
+- **Modelos de terceros** (Hugging Face, se descargan solo si se instala `requirements-ml.txt`):
+  `usezn/Galvanize-3` (clasificador de inyección) y `tricao1105/WARD-2b` (lectura de texto en imágenes).
+  La corrida con LLM real usó `llama3` servido por Ollama.
+- **Librerías**: pydantic, httpx, FastAPI, uvicorn, openai (cliente), PyYAML, Pillow, matplotlib, pytest,
+  pypdf, python-docx, python-pptx; opcionales: torch, torchvision, transformers, accelerate, safetensors.
+- **Datos**: la bóveda, los documentos, los canaries y los casos de los benchmarks son sintéticos y fueron
+  escritos o generados por el equipo. No se usó ningún dato personal real ni ningún sistema de terceros.
+- **Herramientas de IA para programar**: Claude Code (Anthropic) asistió en la escritura de código, tests y
+  documentación. El equipo revisó y ejecutó todo lo que se reporta.
