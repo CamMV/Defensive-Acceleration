@@ -5,8 +5,8 @@
 - Binario: `{0: SAFE, 1: INJECTION}`. P(inyección) = sigmoid(logit[INJECTION] - logit[SAFE]).
 - Lee hasta 512 tokens. Los textos más largos se parten en ventanas solapadas (stride de 256) y se
   toma el máximo, como recomienda su model card.
-- Umbral de servicio de la model card: P >= 0.9802. El umbral 0.5 por defecto del pipeline marca
-  demasiado texto legítimo.
+- Umbral: 0.99 (calibrado con eval/benchmark; ver docs/ML_ARCHITECTURE.md §5d). La model card usa 0.9802; el 0.5 por defecto
+  del pipeline marca demasiado texto legítimo.
 - Multilingüe según su ficha, pero el set de evaluación es privado: sus falsas alarmas sobre
   nuestros documentos en español se miden en `eval/eval_galvanize.py`.
 
@@ -21,7 +21,10 @@ from .hf_common import ModelUnavailable, device_and_dtype, env_float, from_pretr
 
 PREFIX = "GALVANIZE"
 DEFAULT_MODEL = "usezn/Galvanize-3"
-DEFAULT_THRESHOLD = 0.9802
+MODEL_CARD_THRESHOLD = 0.9802  # umbral de servicio de la model card (FPR 0.6 % en su set privado)
+# Calibrado con eval/benchmark (611 casos): 0.99 baja las falsas alarmas frente a 0.95 a cambio de algo de
+# detección; el benchmark de extremo a extremo mostró que la arquitectura contiene lo que se escapa.
+DEFAULT_THRESHOLD = 0.99
 MAX_TOKENS = 512
 STRIDE = 256
 
@@ -56,9 +59,9 @@ class GalvanizeClassifier:
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
             self.model = from_pretrained(AutoModelForSequenceClassification, self.model_id, dtype)
-        except Exception as exc:  # sin red y sin caché, id incorrecto...
+            self.model.to(self.device).eval()
+        except Exception as exc:  # sin red y sin caché, id incorrecto, GPU sin memoria...
             raise ModelUnavailable(f"cannot load {self.model_id}: {type(exc).__name__}: {exc}") from exc
-        self.model.to(self.device).eval()
         self.batch_size = batch_size
         self.safe_index, self.injection_index = self._label_indices()
 

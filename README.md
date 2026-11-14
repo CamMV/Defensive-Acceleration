@@ -89,6 +89,12 @@ notas del orador, comentarios, texto blanco/oculto/diminuto) sale en canales `<o
 | B | enclaves + broker | Orquestador **reactivo**: lee resultados en texto libre y puede añadir pasos |
 | C | B + taint + egreso | Igual que B, pero el contexto que tocó L2 no puede llegar a la red |
 | D | C + plan congelado + aduana | Handles, procedencia, deriva; el Orquestador no lee texto no confiable |
+| E | D-ML: plan DAG congelado | Mismo broker y reglas que D, ejecutado por `agent_runtime/ml_d` (planner + PlanValidator + intérprete DAG + aduana determinista). Se corre con `--configs ABCDE` |
+
+Ablación dentro de D: `--no-scanner` y `--no-datamark` (en `eval.run_matrix` y `main.py`) apagan esos
+interruptores y la fila pasa a llamarse `D-noscan`, `D-nomark` o `D-noscan-nomark`.
+
+E no pone canaries de system prompt, así que su `prompt_leak_rate` sale como `no medido`, no como 0.
 
 Decisión de diseño: el plan congelado va en D y no en B. Un plan fijo solo se sostiene si el Orquestador
 no necesita leer los resultados; mientras lea texto libre (B/C) es un *confused deputy*, y eso es lo que
@@ -120,7 +126,14 @@ conectado y quedan listados en la columna `skipped_requires_vlm`. `--include-vlm
 | `agent_runtime/quarantine.py` | Handles opacos + verificador de procedencia | ML (procedencia) / Ciber (store) |
 | `agent_runtime/enclaves/orchestrator.py`, `vault_worker.py`, `base.py` | Enclaves 0 y 1 | Ambos |
 | `agent_runtime/llm.py` | Cliente OpenAI-compatible + MockLLM | Ambos |
-| `eval/` | `scenarios.yaml`, `judge.py`, `run_matrix.py` | Ambos |
+| `eval/` | `scenarios.yaml`, `judge.py`, `run_matrix.py` (configs A–E) | Ambos |
+| `agent_runtime/ml/` | Modelos y señales: escáner dual (regex + Galvanize-3), lector de imágenes WARD-2b, resumidor, vectores | ML |
+| `agent_runtime/ml_d/` | Sistema D-ML (config E): planner por reglas/LLM, PlanValidator, intérprete DAG, aduana determinista, drift por AST | ML |
+| `agent_runtime/monitors/ast_drift.py` | Adaptador: el drift por AST de `ml_d` detrás de la interfaz de `monitors/intent_drift.py` | Integración |
+| `agent_runtime/runtime.py` | Punto de entrada único de una sesión; despacha A–D a `enclaves/` y E a `ml_d/` | Integración |
+| `demo_ml.py` | Demo propia de `ml_d` (4 ataques y 3 tareas benignas suyas; no es la matriz oficial) | ML |
+| `eval/benchmark/` | Benchmark del escáner de inyección (`cases.yaml`, `run.py`, `e2e.py`); reportes en `docs/benchmarks/` | ML |
+| `scripts/generate_office_vault.py` | Genera los PDF/DOCX/PPTX/PNG de la bóveda, reproducibles byte a byte | Ciberseguridad |
 | `vault/` | Datos sintéticos de los 3 niveles | Ciberseguridad |
 
 Cambios respecto a la estructura objetivo, con su razón:
@@ -155,3 +168,21 @@ Cambios respecto a la estructura objetivo, con su razón:
   externo o un contraste casi igual las evade.
 - **Uso dual.** Los payloads son genéricos y de demostración, apuntan solo al servidor local y no incluyen
   técnicas de evasión contra productos reales. La allowlist de `web_tools.py` impide que el red-team salga de `127.0.0.1:8000`.
+
+## Resultados y ficha técnica
+
+- [`docs/PITCH.md`](docs/PITCH.md): ficha técnica de 2 páginas (amenaza, arquitectura, metodología, resultados, limitaciones, uso dual).
+- [`docs/RESULTS.md`](docs/RESULTS.md): todos los números medidos, cada uno con el archivo del que sale.
+- `docs/benchmark_e2e/`, `docs/benchmarks/`: datos crudos de los benchmarks.
+
+## Atribución
+
+- **Modelos de terceros** (Hugging Face, se descargan solo si se instala `requirements-ml.txt`):
+  `usezn/Galvanize-3` (clasificador de inyección) y `tricao1105/WARD-2b` (lectura de texto en imágenes).
+  La corrida con LLM real usó `llama3` servido por Ollama.
+- **Librerías**: pydantic, httpx, FastAPI, uvicorn, openai (cliente), PyYAML, Pillow, matplotlib, pytest,
+  pypdf, python-docx, python-pptx; opcionales: torch, torchvision, transformers, accelerate, safetensors.
+- **Datos**: la bóveda, los documentos, los canaries y los casos de los benchmarks son sintéticos y fueron
+  escritos o generados por el equipo. No se usó ningún dato personal real ni ningún sistema de terceros.
+- **Herramientas de IA para programar**: Claude Code (Anthropic) asistió en la escritura de código, tests y
+  documentación. El equipo revisó y ejecutó todo lo que se reporta.

@@ -64,8 +64,9 @@ def test_benign_image_text_passes_and_is_quarantined(tmp_path, with_galvanize) -
     assert customs_llm.calls >= 1  # documento limpio: el LLM de la Aduana sí lo procesa
 
 
-@pytest.mark.parametrize("text", [OBVIOUS, PARAPHRASED], ids=["regex", "model"])
-def test_injected_image_blocks_the_document(tmp_path, with_galvanize, text) -> None:
+@pytest.mark.parametrize("text,regex_blocks", [(OBVIOUS, "1"), (PARAPHRASED, "0")], ids=["regex", "model"])
+def test_injected_image_blocks_the_document(tmp_path, with_galvanize, monkeypatch, text, regex_blocks) -> None:
+    monkeypatch.setenv("INJECTION_REGEX_BLOCKS", regex_blocks)
     _, scans, customs_llm, orchestrator = run(tmp_path, FakeReader(text))
     image = [e for e in scans if e.detail["channel"] == "image"]
     assert image and image[0].detail["verdict"] == "malicious" and image[0].allowed is False
