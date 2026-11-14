@@ -9,3 +9,6 @@
 *.xlsx binary
 *.png  binary
 *.jpg  binary
+
+# Datos de benchmark: se conservan byte a byte como los subio su autor (sin normalizar fin de linea).
+docs/benchmarks/** -text
