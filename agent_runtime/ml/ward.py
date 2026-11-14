@@ -87,9 +87,9 @@ class WardImageReader:
         try:
             self.processor = AutoProcessor.from_pretrained(self.model_id, trust_remote_code=True)
             self.model = from_pretrained(AutoModelForImageTextToText, self.model_id, dtype, trust_remote_code=True)
-        except Exception as exc:
+            self.model.to(self.device).eval()
+        except Exception as exc:  # incluye torch.OutOfMemoryError (GPU ocupada, p. ej. por un LLM local)
             raise ModelUnavailable(f"cannot load {self.model_id}: {type(exc).__name__}: {exc}") from exc
-        self.model.to(self.device).eval()
         self._tokenizer = getattr(self.processor, "tokenizer", self.processor)
         self._stop = _TailStop(self._tokenizer)
         self.max_new_tokens = env_int(f"{PREFIX}_MAX_NEW_TOKENS", DEFAULT_MAX_NEW_TOKENS)
