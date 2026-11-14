@@ -80,3 +80,28 @@ def test_ast_drift_adapter_can_be_used_in_config_d(tmp_path):
     assert judge(SCENARIOS["ben_patch_version"], benign)[0]
     checks = [event for event in benign.events if event.kind is AuditKind.DRIFT_CHECK and event.tool == "write_diff"]
     assert checks and "relevance=" in checks[-1].detail["reason"]  # el veredicto vino del monitor por AST
+
+
+# -- T3: ablación del escáner y del datamarking -------------------------------------------------- #
+
+def test_config_variant_names_the_ablation_and_leaves_other_configs_alone():
+    from agent_runtime.runtime import config_variant
+
+    noscan = config_variant(CONFIGS["D"], no_scanner=True)
+    assert noscan.name == "D-noscan" and not noscan.injection_scanner and noscan.datamarking
+    both = config_variant(CONFIGS["D"], no_scanner=True, no_datamark=True)
+    assert both.name == "D-noscan-nomark" and not both.injection_scanner and not both.datamarking
+    assert config_variant(CONFIGS["D"]) is CONFIGS["D"]
+    for name in "ABCE":  # no tienen esos interruptores encendidos: no cambian ni de nombre
+        assert config_variant(CONFIGS[name], no_scanner=True, no_datamark=True) is CONFIGS[name]
+    assert CONFIGS["D"].injection_scanner and CONFIGS["D"].datamarking  # el original no se toca
+
+
+def test_matrix_annotates_the_variant_in_the_config_column(tmp_path):
+    matrix = run_matrix(["D"], reps=1, base_seed=7, mock=True, use_http=False, results_dir=tmp_path,
+                        no_scanner=True)
+    assert [row["config"] for row in matrix] == ["D-noscan"]
+    with (tmp_path / "runs.csv").open(encoding="utf-8") as handle:
+        runs = list(csv.DictReader(handle))
+    assert {row["config"] for row in runs} == {"D-noscan"}
+    assert not any("injection_scan" in row["denies"] for row in runs)  # el escáner no corrió

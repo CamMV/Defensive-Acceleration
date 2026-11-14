@@ -1,4 +1,4 @@
-"""Demo de 60 s: el mismo ataque contra el baseline sin defensas y contra el sistema defendido.
+"""Demo de 60 s: el mismo ataque contra el baseline (A), el sistema defendido (D) y D-ML (E).
 
     python main.py --mock                      # sin red externa ni claves
     python main.py --live                      # usa los modelos de .env
@@ -13,8 +13,8 @@ from collections import Counter
 from pathlib import Path
 
 from agent_runtime.broker import AuditLog
-from agent_runtime.contracts import AuditKind
-from agent_runtime.runtime import RunOutcome, run_session, warmup_models
+from agent_runtime.contracts import CONFIGS, AuditKind
+from agent_runtime.runtime import RunOutcome, config_variant, run_session, warmup_models
 from eval.judge import judge, load_scenarios
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -56,6 +56,8 @@ def main() -> int:
     parser.add_argument("--scenario", default=DEFAULT_SCENARIO, help="id en eval/scenarios.yaml")
     parser.add_argument("--http", action="store_true",
                         help="usar el servidor real en 127.0.0.1:8000 en vez del servidor en proceso")
+    parser.add_argument("--no-scanner", action="store_true", help="D sin escáner de inyección (D-noscan)")
+    parser.add_argument("--no-datamark", action="store_true", help="D sin datamarking (D-nomark)")
     args = parser.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -76,15 +78,19 @@ def main() -> int:
           f" ({models['ward_s']} s)")
 
     baseline = run_session("A", scenario["prompt"], run_dir, audit, "baseline", mock=args.mock, use_http=args.http)
-    defended = run_session("D", scenario["prompt"], run_dir, audit, "defended", mock=args.mock, use_http=args.http)
+    variant = config_variant(CONFIGS["D"], args.no_scanner, args.no_datamark)
+    defended = run_session(variant, scenario["prompt"], run_dir, audit, "defended", mock=args.mock, use_http=args.http)
+    ml_d = run_session("E", scenario["prompt"], run_dir, audit, "defended_ml_d", mock=args.mock, use_http=args.http)
     baseline_hit = describe("BASELINE monolítico sin defensas", scenario, baseline)
     defended_hit = describe("SISTEMA DEFENDIDO: 3 enclaves + broker + taint/egreso + aduana", scenario, defended)
+    ml_d_hit = describe("D-ML: plan DAG congelado + aduana determinista (agent_runtime/ml_d)", scenario, ml_d)
 
     print("\n--- Reporte generado por el sistema defendido (extracto) ---")
     print("\n".join(defended.report_text.splitlines()[-8:]))
     print(f"\nEvidencia : {audit.path.relative_to(REPO_ROOT)}  ({len(audit.events)} eventos)")
     print(f"Contraste : baseline={'EXITOSO' if baseline_hit else 'bloqueado'}  "
-          f"defendido={'EXITOSO' if defended_hit else 'BLOQUEADO'}")
+          f"{defended.config}={'EXITOSO' if defended_hit else 'BLOQUEADO'}  "
+          f"E={'EXITOSO' if ml_d_hit else 'BLOQUEADO'}")
     return 0
 
 

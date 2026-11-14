@@ -95,6 +95,22 @@ def build_defended_system(config: DefenseConfig, session_id: str, vault_dir: Pat
     return Orchestrator(broker, llms[0], config, customs, worker), llms
 
 
+def config_variant(config: DefenseConfig, no_scanner: bool = False, no_datamark: bool = False) -> DefenseConfig:
+    """Variante de ablación: apaga el escáner y/o el datamarking y lo anota en el nombre (p. ej. D-noscan).
+
+    Solo afecta a las configuraciones que tienen ese interruptor encendido; el resto vuelve igual.
+    """
+    update: dict[str, Any] = {}
+    suffix = ""
+    if no_scanner and config.injection_scanner:
+        update["injection_scanner"] = False
+        suffix += "-noscan"
+    if no_datamark and config.datamarking:
+        update["datamarking"] = False
+        suffix += "-nomark"
+    return config.model_copy(update={**update, "name": config.name + suffix}) if update else config
+
+
 def run_ml_d(session_id: str, vault_dir: Path, audit: AuditLog, client: httpx.Client, prompt: str,
              mock: bool) -> int:
     """Configuración E: ejecuta el sistema de `agent_runtime/ml_d` y devuelve sus llamadas LLM.
