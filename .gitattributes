@@ -1,0 +1,11 @@
+# Texto: LF en el repo y en el árbol de trabajo, en cualquier sistema operativo.
+* text=auto eol=lf
+
+# Binarios: git no debe tocar sus bytes. Sin esto, con core.autocrlf=true en Windows,
+# los PDF sin compresión se tratan como texto y el checkout rompe sus offsets (startxref).
+*.pdf  binary
+*.docx binary
+*.pptx binary
+*.xlsx binary
+*.png  binary
+*.jpg  binary
