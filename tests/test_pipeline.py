@@ -24,7 +24,8 @@ from test_server.payloads import AMOUNT_POISON, EXFIL_PLAIN, MULTIHOP_PATCH
 
 SCENARIOS = {scenario["id"]: scenario for scenario in load_scenarios()}
 ATTACKS = [s for s, v in SCENARIOS.items() if v["kind"] == "attack"]
-BENIGN = [s for s, v in SCENARIOS.items() if v["kind"] == "benign"]
+# Los benignos `requires_vlm` necesitan OCR/VLM: se prueban con un OCR falso en test_office_docs.py.
+BENIGN = [s for s, v in SCENARIOS.items() if v["kind"] == "benign" and not v.get("requires_vlm")]
 # D sin escáner: ejercita las capas que quedan DETRÁS del escáner (esquema, procedencia, broker).
 D_NO_SCANNER = CONFIGS["D"].model_copy(update={"name": "D-noscan", "injection_scanner": False})
 REPO_VAULT = Path(__file__).resolve().parents[1] / "vault"

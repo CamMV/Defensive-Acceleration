@@ -88,13 +88,24 @@ class Customs(Enclave):
         if not result.decision.allowed or result.output is None:
             return self._failure(step, result.decision.rule)
         raw = result.output
-        scan = self._scan(step, raw)
+        local_image = raw.startswith(IMAGE_DATA_PREFIX)
+        if local_image:
+            # Imagen local (.png/.jpg de L0) o URL de imagen: mismo OCR/VLM que las imágenes web.
+            # El texto reconocido es NO confiable: reemplaza al documento y pasa por el MISMO escáner,
+            # LLM en cuarentena, procedencia y QuarantineStore que cualquier otro texto L0.
+            raw = self._ocr_bytes(raw)
+        scan = self._scan(step, raw, channel="image" if local_image else "document")
         blocked = scan is not None and scan.verdict == "malicious"
+        if blocked and local_image:
+            assert scan is not None
+            raw = mask_spans(raw, scan.spans)  # el texto de la imagen bloqueada nunca va a cuarentena en claro
         if not self._config.customs_ml:
             if blocked:
                 return FreeTextResult(step_id=step.step_id, text="[blocked: injection_scan]", label=Label.L0)
             return self._legacy_summary(step, raw)
-        # Imágenes: el lector (WARD-2b) transcribe y el texto pasa por el MISMO doble chequeo que el
+        if local_image:
+            return self._structured_record(step, raw, blocked, raw, from_image=True)
+        # Imágenes de la página: el lector transcribe y el texto pasa por el MISMO doble chequeo que el
         # documento. Si el documento ya está bloqueado no se descargan (menos superficie y latencia).
         image_text = "" if blocked else self._read_images(step, raw)
         if image_text.strip():
@@ -103,6 +114,14 @@ class Customs(Enclave):
                 blocked = True
                 image_text = mask_spans(image_text, image_scan.spans)
         return self._structured_record(step, raw, blocked, image_text)
+
+    def _ocr_bytes(self, data_uri: str) -> str:
+        """OCR/VLM sobre los bytes de una imagen entregada por el broker (data URI)."""
+        try:
+            data = base64.b64decode(data_uri[len(IMAGE_DATA_PREFIX):], validate=True)
+        except ValueError:
+            return ""
+        return (self._ocr(data) or "")[:MAX_DOCUMENT_CHARS]
 
     # -- escáner y datamarking -------------------------------------------------- #
 
@@ -160,8 +179,11 @@ class Customs(Enclave):
     # -- modo D: registro tipado + handles ------------------------------------ #
 
     def _structured_record(self, step: PlanStep, raw: str, blocked: bool = False,
-                           image_text: str = "") -> ExtractedRecord:
-        visible = visible_text(raw)
+                           image_text: str = "", from_image: bool = False) -> ExtractedRecord:
+        """`from_image=True` cuando el archivo ES una imagen: `raw` es su texto OCR (ya enmascarado si el
+        escáner lo bloqueó). No hay texto visible ni subimágenes; el OCR solo puede aportar campos que el
+        LLM proponga y la procedencia verifique, nunca el extractor determinista."""
+        visible = "" if from_image else visible_text(raw)
         # Texto de imagen bloqueado (enmascarado) no sirve como fuente de procedencia.
         source_text = visible if blocked else f"{visible}\n{image_text}"
 
@@ -176,7 +198,8 @@ class Customs(Enclave):
             # Veredicto malicioso: el LLM no ve el documento; solo corre el extractor determinista
             # y los tramos señalados se enmascaran antes de ir a cuarentena.
             assert self._scanner is not None
-            quarantined = mask_spans(visible, self._scanner.scan_document(visible, step.target).spans)
+            if not from_image:  # el texto de imagen ya llega enmascarado desde `process`
+                quarantined = mask_spans(visible, self._scanner.scan_document(visible, step.target).spans)
         else:
             reply = self._ask("customs_act", self._system_prompt(),
                               {"mode": "fields", "document": self._datamark(raw[:MAX_DOCUMENT_CHARS])})
@@ -199,13 +222,15 @@ class Customs(Enclave):
                 dropped.append(name)
                 self._audit(step, AuditKind.SCHEMA_DROP, "extractor_disagreement", name)
 
-        handles = {TextField.BODY: self._quarantine.put(self._datamark(quarantined), Label.L0, step.target,
-                                                        TextField.BODY.value)}
+        handles: dict[TextField, str] = {}
+        if not from_image:
+            handles[TextField.BODY] = self._quarantine.put(self._datamark(quarantined), Label.L0, step.target,
+                                                           TextField.BODY.value)
         if image_text.strip():
             handles[TextField.IMAGE_TEXT] = self._quarantine.put(self._datamark(image_text), Label.L0, step.target,
                                                                  TextField.IMAGE_TEXT.value)
         return ExtractedRecord(step_id=step.step_id, doc_type=self._doc_type(step, fields),
-                               image_count=min(len(image_sources(raw)), 50), text_handles=handles,
+                               image_count=1 if from_image else min(len(image_sources(raw)), 50), text_handles=handles,
                                dropped_fields=tuple(dict.fromkeys(dropped)), **fields)
 
     def _validated(self, step: PlanStep, proposed: dict[str, Any], dropped: list[str], origin: str) -> dict[str, Any]:
