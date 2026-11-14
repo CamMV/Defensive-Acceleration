@@ -198,7 +198,7 @@ de alcance: OCR/VLM, LLM para redactar en E1 y embeddings (trabajo futuro).
 | M2 | `quarantine.py`: store, handles, procedencia + normalizadores | `pytest tests/test_quarantine.py` | ✅ 21 tests (119 en total) |
 | M3 | `customs.py`: parseo visible/oculto, extractores, señal de inyección | `pytest tests/test_customs.py` | ✅ 23 tests (142 en total) |
 | M4 | Planner (LLM + fallback por reglas) + validator + intérprete DAG + `vault_worker` | `python main.py --mock` | ✅ 13 tests; demo: ASR 0/4, utilidad 3/3, 0 llamadas LLM |
-| M5 | `intent_drift.py` (plan + AST/coseno) + set etiquetado de diffs | `pytest tests/test_intent_drift.py` | ⬜ |
+| M5 | `intent_drift.py` (plan + AST/coseno) + set etiquetado de diffs | `pytest tests/test_intent_drift.py` · `python -m eval.drift_eval` | ✅ TPR 100% / FPR 0% en 24 diffs propios (sesgado: set y monitor escritos juntos; d01/d11 justo en el umbral 0.5) |
 | M6 | Live con Ollama local: Planner real; D contra el baseline A de Ciber | `python main.py --live` | ⬜ |
 | M7 | Matriz A vs D: ASR, utilidad, falsos bloqueos, **latencia, llamadas LLM** | `python eval/run_matrix.py --live` | ⬜ |
 

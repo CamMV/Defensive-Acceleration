@@ -19,6 +19,7 @@ from .enclaves.orchestrator import Orchestrator
 from .enclaves.planner import LLMPlanner, PlanValidator, RulePlanner
 from .enclaves.vault_worker import DriftCheck, VaultWorker
 from .llm import BaseLLM
+from .monitors.intent_drift import IntentDriftMonitor
 from .quarantine import QuarantineStore
 from .tools import local_tools
 from .tools.web_tools import WebTools
@@ -48,7 +49,8 @@ def build_defended_system(vault_root: Path, audit: AuditLog, web_client: httpx.C
     broker.register_tool(ToolName.WRITE_DIFF, local_tools.write_diff)
     store = QuarantineStore(session_id, audit)
     customs = CustomsEnclave(broker, store)
-    worker = VaultWorker(broker, store, patch_llm=patch_llm, drift_check=drift_check)
+    worker = VaultWorker(broker, store, patch_llm=patch_llm,
+                         drift_check=drift_check if drift_check is not None else IntentDriftMonitor())
     planner = LLMPlanner(planner_llm, audit, session_id) if planner_llm is not None else RulePlanner()
     orchestrator = Orchestrator(broker, customs, worker, planner, PlanValidator(audit))
     return DefendedSystem(session_id, broker, store, customs, worker, orchestrator)
