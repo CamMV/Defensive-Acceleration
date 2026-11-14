@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ..quarantine import dates_in, parse_amount
+from ..ml_d.quarantine import dates_in, parse_amount
 
 _INVOICE_HINT = re.compile(r"\b(invoice|factura)\b", re.IGNORECASE)
 _INVOICE_ID = re.compile(r"(?:invoice|factura)\s*(?:id|no\.?|number|n[uú]mero|#)?\s*[:#]?\s*([A-Z]{2,6}-\d{1,8})\b",

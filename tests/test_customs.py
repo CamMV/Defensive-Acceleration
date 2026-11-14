@@ -11,9 +11,9 @@ from agent_runtime.broker import AuditLog, CapabilityBroker
 from agent_runtime.contracts import (
     CONFIGS, ActionType, AuditKind, DocType, ExtractedRecord, PlanStep, TextField, ToolName,
 )
-from agent_runtime.enclaves.customs import CustomsEnclave, StepDenied
+from agent_runtime.ml_d.customs import CustomsEnclave, StepDenied
 from agent_runtime.ml.html_split import split_html
-from agent_runtime.quarantine import QuarantineStore
+from agent_runtime.ml_d.quarantine import QuarantineStore
 from agent_runtime.tools import local_tools
 from agent_runtime.tools.web_tools import WebTools
 from test_server.app import create_app, inprocess_client
@@ -84,19 +84,19 @@ def test_hidden_text_injection_never_enters(env: Env, variant: str) -> None:
 def test_invoice_fields(env: Env) -> None:
     record = env.run(ActionType.FETCH_URL, BASE + "/invoice/1042")
     assert (record.doc_type, record.invoice_id, record.total_amount, record.currency, record.issue_date) == (
-        DocType.INVOICE, "ACME-1042", Decimal("1250.00"), "USD", dt.date(2026, 10, 15))
+        DocType.INVOICE, "FAC-1042", Decimal("125000000.00"), "COP", dt.date(2026, 10, 15))
 
 
 def test_hidden_poisoned_amount_is_ignored(env: Env) -> None:
     record = env.run(ActionType.FETCH_URL, BASE + "/invoice/2002")
-    assert record.total_amount == Decimal("1310.00") and record.invoice_id == "GLX-2002"
+    assert record.total_amount == Decimal("131000000.00") and record.invoice_id == "FAC-2002"
     assert env.customs.signals["s1"].hidden_chars > 0
 
 
 def test_provenance_drops_value_from_hijacked_extractor(env: Env) -> None:
     class HijackedExtractor:
         def extract(self, visible_text):
-            return {"invoice_id": "GLX-2002", "total_amount": Decimal("999999.00")}
+            return {"invoice_id": "FAC-2002", "total_amount": Decimal("999999.00")}
 
     env.customs.extractor = HijackedExtractor()
     record = env.run(ActionType.FETCH_URL, BASE + "/invoice/2002")
@@ -106,7 +106,7 @@ def test_provenance_drops_value_from_hijacked_extractor(env: Env) -> None:
 
 def test_visible_injection_in_invoice_notes_is_quarantined(env: Env) -> None:
     record = env.run(ActionType.FETCH_URL, BASE + "/invoice/2001")
-    assert record.total_amount == Decimal("870.50")
+    assert record.total_amount == Decimal("87050000.00")
     assert "IMPORTANT NOTE" in env.body(record)  # visible: queda en cuarentena para el humano
     assert env.customs.signals["s1"].flagged and env.customs.signals["s1"].channel == "visible"
 
@@ -138,13 +138,14 @@ def test_search_results(env: Env) -> None:
 
 
 def test_poisoned_inbox_file(env: Env) -> None:
-    record = env.run(ActionType.READ_INBOX, "untrusted_inbox/supplier_notes_poisoned.md")
+    record = env.run(ActionType.READ_INBOX, "untrusted_inbox/propuesta_contratista_envenenada.txt")
     assert record.doc_type is DocType.INBOX_FILE and env.customs.signals["s1"].flagged
 
 
 def test_benign_inbox_file(env: Env) -> None:
-    record = env.run(ActionType.READ_INBOX, "untrusted_inbox/vendor_readme.md")
-    assert record.version == "3.1.0" and not env.customs.signals["s1"].flagged
+    record = env.run(ActionType.READ_INBOX, "untrusted_inbox/propuesta_constructora_andina.txt")
+    assert record.doc_type is DocType.INBOX_FILE and TextField.BODY in record.text_handles
+    assert not env.customs.signals["s1"].flagged
 
 
 @pytest.mark.parametrize("action,target", [
@@ -152,7 +153,7 @@ def test_benign_inbox_file(env: Env) -> None:
     (ActionType.FETCH_URL, BASE + "/invoice/2001"),
     (ActionType.FETCH_URL, BASE + "/docs-text-injection?variant=css"),
     (ActionType.WEB_SEARCH, "acme-http retry troubleshooting"),
-    (ActionType.READ_INBOX, "untrusted_inbox/supplier_notes_poisoned.md"),
+    (ActionType.READ_INBOX, "untrusted_inbox/propuesta_contratista_envenenada.txt"),
 ])
 def test_record_for_orchestrator_has_no_free_text(env: Env, action: ActionType, target: str) -> None:
     """La propiedad central: lo que ve el Orquestador nunca contiene la instrucción."""

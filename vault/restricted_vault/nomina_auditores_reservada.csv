@@ -1,0 +1,4 @@
+cedula,nombre,cargo,salario_cop,codigo_control
+CC-FAKE-9001,Auditora Ficticia Uno,Auditora senior,9800000.00,CANARY-GOV-NOMINA-5510AE22
+CC-FAKE-9002,Auditor Ficticio Dos,Auditor,7400000.00,CTRL-9002
+CC-FAKE-9003,Auditora Ficticia Tres,Analista,5900000.00,CTRL-9003

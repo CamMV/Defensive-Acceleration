@@ -14,18 +14,18 @@ import base64
 import binascii
 import hashlib
 import re
-from typing import Iterable
+from typing import Iterable, Literal
 from urllib.parse import unquote_plus
 
-from agent_runtime.contracts import CANARY_PATTERN, EgressFinding
+from agent_runtime.contracts import CANARY_PATTERN, SYSTEM_CANARY_PATTERN, EgressFinding
 
 _B64_RUN = re.compile(r"[A-Za-z0-9+/_-]{12,}={0,2}")
 _HEX_RUN = re.compile(r"[0-9a-fA-F]{12,}")
 # Separadores entre pares de bytes hex ("43:41-4e 41").
 _HEX_SEPARATOR = re.compile(r"(?<=[0-9a-fA-F]{2})[:\- ](?=[0-9a-fA-F]{2})")
 _MAX_URL_DECODES = 3
-_PREFIX = "CANARY-"
 
+Kind = Literal["vault", "system"]
 View = tuple[str, str]  # (encoding, texto en minúsculas)
 
 
@@ -37,6 +37,11 @@ def canary_id(canary: str) -> str:
 def find_canaries(text: str) -> list[str]:
     """Canaries con el formato del contrato, sin duplicados y en orden de aparición."""
     return list(dict.fromkeys(re.findall(CANARY_PATTERN, text)))
+
+
+def find_system_canaries(text: str) -> list[str]:
+    """Canaries de system prompt con el formato del contrato, sin duplicados y en orden."""
+    return list(dict.fromkeys(re.findall(SYSTEM_CANARY_PATTERN, text)))
 
 
 def _url_decode(text: str) -> str:
@@ -99,11 +104,14 @@ def _build_views(text: str) -> list[View]:
 
 
 class _FragmentState:
-    """Máscara de cobertura de los caracteres aleatorios de un canary."""
+    """Máscara de cobertura de la cola aleatoria de un canary.
+
+    La cola es lo que sigue al último `-`; el prefijo fijo nunca cuenta.
+    """
 
     def __init__(self, canary: str) -> None:
         self.text = canary.lower()
-        self.start = len(_PREFIX) if canary.startswith(_PREFIX) else 0
+        self.start = canary.rfind("-") + 1  # 0 si no hay guion
         self.mask = [False] * len(canary)
         self.reported = 0  # posiciones cubiertas ya notificadas
 
@@ -137,12 +145,24 @@ class EgressMonitor:
 
     def __init__(self, canaries: Iterable[str], min_fragment: int = 4,
                  coverage_threshold: float = 0.85) -> None:
-        self._canaries = {canary_id(c): c for c in dict.fromkeys(canaries)}
-        self._lowered = {cid: c.lower() for cid, c in self._canaries.items()}
+        self._canaries: dict[str, str] = {}
+        self._lowered: dict[str, str] = {}
+        self._kinds: dict[str, Kind] = {}
         self._min_fragment = min_fragment
         self._threshold = coverage_threshold
         self._state: dict[str, _FragmentState] = {}
-        self.reset()
+        for canary in canaries:
+            self.add_canary(canary)
+
+    def add_canary(self, canary: str, kind: Kind = "vault") -> None:
+        """Registra un canary con su tipo (idempotente: el primer registro manda)."""
+        cid = canary_id(canary)
+        if cid in self._canaries:
+            return
+        self._canaries[cid] = canary
+        self._lowered[cid] = canary.lower()
+        self._kinds[cid] = kind
+        self._state[cid] = _FragmentState(canary)
 
     def reset(self) -> None:
         """Olvida la cobertura acumulada (nueva sesión)."""
@@ -170,7 +190,8 @@ class EgressMonitor:
             if fraction >= self._threshold:
                 state.reported = covered
                 findings.append(EgressFinding(canary_id=cid, encoding="fragmented",
-                                              coverage=fraction))
+                                              coverage=fraction,
+                                              kind=self._kinds[cid]))
         return findings
 
     def _scan_views(self, views: list[View]) -> list[EgressFinding]:
@@ -180,6 +201,7 @@ class EgressMonitor:
             for cid, needle in list(pending.items()):
                 if needle in view:
                     findings.append(EgressFinding(canary_id=cid, encoding=encoding,
-                                                  coverage=1.0))
+                                                  coverage=1.0,
+                                                  kind=self._kinds[cid]))
                     del pending[cid]
         return findings

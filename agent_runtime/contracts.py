@@ -92,7 +92,11 @@ VAULT_LEVELS: dict[str, Label] = {
     "restricted_vault": Label.L2,
 }
 
-CANARY_PATTERN = r"CANARY-[0-9a-f]{16}"
+# Canaries sintéticos. No imitan ningún formato real de credencial.
+#   Bóveda:  CANARY-GOV-<SISTEMA>-<8 a 16 hex> (p. ej. CANARY-GOV-SECOP-9F2A..., CANARY-GOV-UIAF-7741BC90)
+#   Sistema: SYS-CANARY-E<n>-<16 hex>        uno por instancia de enclave (M0 = baseline monolítico)
+CANARY_PATTERN = r"CANARY-GOV-[A-Z]{2,16}-[0-9A-F]{8,16}"
+SYSTEM_CANARY_PATTERN = r"SYS-CANARY-[EM][0-9]-[0-9A-F]{16}"
 
 # --------------------------------------------------------------------------- #
 # Tipos acotados
@@ -123,6 +127,8 @@ class DefenseConfig(_Strict):
     egress_monitor: bool        # detección de canaries en sumideros
     frozen_plan: bool           # plan-then-execute estricto
     customs_ml: bool            # handles + procedencia + deriva
+    injection_scanner: bool = False  # escáner de inyección antes de exponer el LLM de la Aduana
+    datamarking: bool = False        # spotlighting: delimitadores alrededor del texto no confiable
 
 
 CONFIGS: dict[str, DefenseConfig] = {
@@ -133,7 +139,8 @@ CONFIGS: dict[str, DefenseConfig] = {
     "C": DefenseConfig(name="C", privilege_separation=True, taint=True,
                        egress_monitor=True, frozen_plan=False, customs_ml=False),
     "D": DefenseConfig(name="D", privilege_separation=True, taint=True,
-                       egress_monitor=True, frozen_plan=True, customs_ml=True),
+                       egress_monitor=True, frozen_plan=True, customs_ml=True,
+                       injection_scanner=True, datamarking=True),
 }
 
 # --------------------------------------------------------------------------- #
@@ -144,7 +151,7 @@ CONFIGS: dict[str, DefenseConfig] = {
 class PlanStep(_Strict):
     step_id: StepId
     action: ActionType
-    target: Annotated[str, StringConstraints(min_length=1, max_length=400)]
+    target: Annotated[str, StringConstraints(min_length=1, max_length=2000)]
     origin: Literal["user_prompt", "replan"] = "user_prompt"
     # Aristas del DAG: pasos anteriores cuyo output consume este paso (solo hacia atrás).
     inputs: tuple[StepId, ...] = ()
@@ -173,7 +180,7 @@ class CapabilityToken(_Strict):
     tool: ToolName
     operation: Operation
     # Glob sobre ruta relativa a la bóveda (posix, minúsculas) o sobre "host:port/path?query".
-    scope: Annotated[str, StringConstraints(min_length=1, max_length=600)]
+    scope: Annotated[str, StringConstraints(min_length=1, max_length=2400)]
     expires_at: float
     single_use: bool = True
     step_id: Optional[StepId] = None
@@ -285,6 +292,21 @@ class EgressFinding(_Strict):
     canary_id: ShortId  # sha256(canary)[:12]; el canary nunca se escribe en logs
     encoding: Literal["plain", "base64", "url", "hex", "reversed", "fragmented"]
     coverage: Annotated[float, Field(ge=0, le=1)] = 1.0
+    kind: Literal["vault", "system"] = "vault"  # system = canary de system prompt de un enclave
+
+
+class ScanSpan(_Strict):
+    start: Annotated[int, Field(ge=0)]
+    end: Annotated[int, Field(ge=0)]
+    rule: ShortId  # regla que disparó; nunca el texto del span
+
+
+class ScanResult(_Strict):
+    """Salida del escáner de inyección sobre un documento no confiable."""
+
+    score: Annotated[float, Field(ge=0, le=1)]
+    spans: tuple[ScanSpan, ...] = ()
+    verdict: Literal["clean", "suspicious", "malicious"]
 
 
 class DriftVerdict(_Strict):
@@ -312,7 +334,9 @@ class AuditKind(str, Enum):
     DRIFT_CHECK = "drift_check"
     EGRESS_ALERT = "egress_alert"
     EXPOSURE = "exposure"
-    INJECTION_SIGNAL = "injection_signal"  # telemetría de la Aduana (no bloquea)
+    INJECTION_SCAN = "injection_scan"
+    INTERNAL_PROMPT_LEAKAGE = "internal_prompt_leakage"
+    INJECTION_SIGNAL = "injection_signal"  # telemetría de la Aduana ML (no bloquea)
 
 
 class AuditEvent(BaseModel):

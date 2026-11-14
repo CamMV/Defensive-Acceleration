@@ -188,6 +188,30 @@ B/C).
 
 ---
 
+## 5b. Integración con `main` (merge del 2026-11-14)
+
+`main` (Ciberseguridad) trae su propia implementación de D (`agent_runtime/enclaves/`,
+`runtime.py`), el baseline A, la matriz `eval/run_matrix.py` y el vault de contratación
+pública. Decisión: **main es la base**.
+
+- En los 8 archivos en conflicto quedó la versión de `main`.
+- Nuestra implementación se movió, sin cambios de lógica, a `agent_runtime/ml_d/`
+  (`customs`, `orchestrator`, `vault_worker`, `planner`, `quarantine`, `llm`,
+  `intent_drift`, `system`). `agent_runtime/ml/` (vectores, html_split, extractores, señal,
+  resumidor) no chocaba y sigue igual.
+- `contracts.py`: unión de ambos lados (`PlanStep.inputs`, `TextField.SUMMARY`,
+  `INJECTION_SIGNAL` junto a `INJECTION_SCAN` e `INTERNAL_PROMPT_LEAKAGE`).
+- Nuestra demo pasó a `demo_ml.py`; `main.py` es la de `main` (baseline vs defendido).
+- Nuestros tests se adaptaron al vault nuevo (FAC-1042 en COP, `contrato_obra_LP-2026-014.md`,
+  `acta_auditoria.md`, propuestas envenenadas).
+
+Siguiente paso: conectar las piezas de `ml/` y `ml_d/` en los puntos `# ML-TEAM:` de main
+(`monitors/injection_scanner.py`, `monitors/intent_drift.py`, `enclaves/customs.py`) para
+quedar con un solo sistema medido por `eval/run_matrix.py`.
+
+Fallo conocido heredado de `main`: `tests/test_office_docs.py::test_generator_is_reproducible`
+(los .docx regenerados difieren en bytes de timestamp del zip); falla igual en `main` puro.
+
 ## 6. Plan por fases y progreso
 
 Cada fase termina con: tests en verde → ✅ en esta tabla → commit local.

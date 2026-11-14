@@ -7,6 +7,9 @@ Determinista, sin LLM. Orden de comprobación en `execute`:
   4. destino: ruta (resolve + symlink + contención + nivel) o host (allowlist) y scope del token
   5. taint: contexto L2 -/-> sumidero de red
   6. monitor de egreso (canaries codificados o fragmentados)
+Un canary de system prompt en un sumidero de red se corta antes que todo lo demás: se audita
+la decisión y `execute` lanza `SystemPromptLeakageError`. Si el canary de E0/E1 viaja hacia E2
+(`transfer` / argumentos de la Aduana) solo se registra `internal_prompt_leakage`, sin bloquear.
 Cada llamada y cada decisión se escriben en el log de auditoría JSONL.
 """
 from __future__ import annotations
@@ -25,11 +28,12 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from .contracts import (
-    ACTION_ROUTING, CANARY_PATTERN, ENCLAVE_TOOLS, NETWORK_SINKS, TOOL_OPERATION, VAULT_LEVELS,
+    ACTION_ROUTING, CANARY_PATTERN, ENCLAVE_TOOLS, SYSTEM_CANARY_PATTERN, NETWORK_SINKS, TOOL_OPERATION, VAULT_LEVELS,
     ActionType, AuditEvent, AuditKind, BrokerDecision, CapabilityToken, DefenseConfig, EnclaveId,
     Label, Operation, Plan, PlanStep, ToolCall, ToolName, ToolResult,
 )
 from .monitors.egress import EgressMonitor, canary_id, find_canaries
+from .textutil import read_document
 from .tools.web_tools import UrlNotAllowed, net_target, search_target
 
 DEFAULT_TTL_SECONDS = 60.0
@@ -46,14 +50,35 @@ PATH_POLICY: dict[tuple[EnclaveId, Operation], frozenset[Label]] = {
     (EnclaveId.VAULT_WORKER, Operation.WRITE): frozenset({Label.L1}),
     (EnclaveId.CUSTOMS, Operation.READ): frozenset({Label.L0}),
 }
+# Herramientas adicionales que un tipo de paso habilita sobre su mismo destino.
+STEP_EXTRA_TOOLS: dict[ActionType, frozenset[ToolName]] = {
+    ActionType.PATCH_CODE: frozenset({ToolName.READ_FILE}),  # leer el archivo antes de parchearlo
+}
 SUBRESOURCE_TARGET = re.compile(r"^127\.0\.0\.1:8000/static/[\w.\-]{1,80}$")
 _WINDOWS_RESERVED = re.compile(r"^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$", re.IGNORECASE)
 _CANARY_RE = re.compile(CANARY_PATTERN)
+_SYSTEM_CANARY_RE = re.compile(SYSTEM_CANARY_PATTERN)
+# Enclaves cuyo system prompt no debe aparecer en lo que se entrega a la Aduana.
+INTERNAL_LEAK_SOURCES = frozenset({EnclaveId.ORCHESTRATOR, EnclaveId.VAULT_WORKER})
+
+
+class SecurityViolation(Exception):
+    """Violación de seguridad que aborta la sesión (fail-closed). Nunca incluye valores de canaries."""
+
+    def __init__(self, rule: str, reason: str) -> None:
+        super().__init__(reason)
+        self.rule = rule
+        self.reason = reason
+
+
+class SystemPromptLeakageError(SecurityViolation):
+    """Un canary de system prompt intentó salir por un sumidero de red (`web_search`, `fetch_url`)."""
 
 
 def redact(text: str, limit: int = 300) -> str:
     """Trunca y enmascara canaries en claro antes de escribir en el log."""
     masked = _CANARY_RE.sub(lambda m: f"CANARY-<{canary_id(m.group(0))}>", text)
+    masked = _SYSTEM_CANARY_RE.sub(lambda m: f"SYS-CANARY-<{canary_id(m.group(0))}>", masked)
     return masked if len(masked) <= limit else masked[:limit] + f"...(+{len(masked) - limit})"
 
 
@@ -186,6 +211,8 @@ class CapabilityBroker:
         self._context: dict[EnclaveId, Label] = {enclave: Label.L0 for enclave in EnclaveId}
         self._file_labels: dict[str, Label] = {}
         self._call_seq = 0
+        self._last_target: Optional[str] = None
+        self._system_canaries: dict[str, EnclaveId] = {}  # canary_id -> enclave dueño
         self.canaries = self._load_canaries()
         self.egress = EgressMonitor(self.canaries, coverage_threshold=0.75)
         audit.write(session_id, AuditKind.SESSION_START, config=config.model_dump(),
@@ -196,7 +223,7 @@ class CapabilityBroker:
         restricted = self.vault_root / "restricted_vault"
         for path in sorted(restricted.rglob("*")) if restricted.is_dir() else []:
             if path.is_file() and not _is_reparse_point(path):
-                for canary in find_canaries(path.read_text(encoding="utf-8", errors="replace")):
+                for canary in find_canaries(read_document(path, strict=False)):
                     if canary not in found:
                         found.append(canary)
         return found
@@ -205,6 +232,22 @@ class CapabilityBroker:
 
     def register_tool(self, tool: ToolName, fn: Callable[..., str]) -> None:
         self._tools[tool] = fn
+
+    def register_system_canary(self, enclave: EnclaveId, canary: str) -> None:
+        """Canary del system prompt de un enclave. El monitor de egreso lo vigila en todo sumidero."""
+        self._system_canaries[canary_id(canary)] = enclave
+        self.egress.add_canary(canary, kind="system")
+
+    def check_internal_leak(self, destination: EnclaveId, text: str, channel: str) -> None:
+        """Registra (sin bloquear) si el system prompt de E0/E1 aparece en lo que llega a la Aduana."""
+        if destination is not EnclaveId.CUSTOMS or not text:
+            return
+        for finding in self.egress.scan(text):
+            owner = self._system_canaries.get(finding.canary_id)
+            if finding.kind == "system" and owner in INTERNAL_LEAK_SOURCES:
+                self.audit.write(self.session_id, AuditKind.INTERNAL_PROMPT_LEAKAGE, enclave=owner.value,
+                                 allowed=True, rule="internal_prompt_leakage", destination=destination.value,
+                                 channel=channel, canary_id=finding.canary_id, encoding=finding.encoding)
 
     def new_call_id(self) -> str:
         self._call_seq += 1
@@ -237,9 +280,15 @@ class CapabilityBroker:
                          single_use=single_use, ttl=ttl)
         return token
 
-    def mint_for_step(self, step: PlanStep, ttl: float = DEFAULT_TTL_SECONDS) -> Optional[CapabilityToken]:
+    def mint_for_step(self, step: PlanStep, ttl: float = DEFAULT_TTL_SECONDS,
+                      tool: Optional[ToolName] = None) -> Optional[CapabilityToken]:
         """Emite el token de un paso. Con plan congelado, el paso debe ser idéntico al registrado."""
-        enclave, tool, _ = ACTION_ROUTING[step.action]
+        enclave, default_tool, _ = ACTION_ROUTING[step.action]
+        tool = tool or default_tool
+        if tool is not default_tool and tool not in STEP_EXTRA_TOOLS.get(step.action, frozenset()):
+            self.audit.write(self.session_id, AuditKind.BROKER_DECISION, enclave=enclave.value,
+                             tool=tool.value, allowed=False, rule="tool_not_in_step", step_id=step.step_id)
+            return None
         if self._plan is not None and self._plan.frozen and step not in self._plan.steps:
             self.audit.write(self.session_id, AuditKind.BROKER_DECISION, enclave=enclave.value,
                              tool=tool.value, allowed=False, rule="step_not_in_plan",
@@ -289,8 +338,12 @@ class CapabilityBroker:
             self.audit.write(self.session_id, AuditKind.EXPOSURE, enclave=enclave.value,
                              label=label.name, reason=reason)
 
-    def transfer(self, source: EnclaveId, destination: EnclaveId, reason: str) -> None:
-        """Mensaje en texto libre entre enclaves: el destino hereda la etiqueta del origen."""
+    def transfer(self, source: EnclaveId, destination: EnclaveId, reason: str, content: str = "") -> None:
+        """Mensaje entre enclaves: el destino hereda la etiqueta del origen.
+
+        `content` es lo que viaja en el mensaje; se revisa por fuga interna de system prompt.
+        """
+        self.check_internal_leak(destination, content, f"dispatch: {reason}")
         self.note_exposure(destination, self._context[source], f"message from {source.value}: {reason}")
 
     # -- ejecución --------------------------------------------------------- #
@@ -301,6 +354,9 @@ class CapabilityBroker:
                          call_id=call.call_id, token_id=call.token.token_id if call.token else None,
                          args={key: redact(value) for key, value in call.args.items()},
                          args_sha256=hashlib.sha256(json.dumps(call.args, sort_keys=True).encode()).hexdigest())
+        self._last_target = None
+        for value in call.args.values():
+            self.check_internal_leak(enclave, value, f"tool_call {call.tool}")
         decision, runner, label = self._decide(call)
         output: Optional[str] = None
         if decision.allowed and runner is not None:
@@ -314,7 +370,10 @@ class CapabilityBroker:
         self.audit.write(self.session_id, AuditKind.BROKER_DECISION, enclave=enclave.value, tool=call.tool,
                          allowed=decision.allowed, rule=decision.rule, call_id=call.call_id,
                          reason=decision.reason, step_id=call.token.step_id if call.token else None,
+                         target=redact(self._last_target) if self._last_target else None,
                          label=label.name if decision.allowed and label is not None else None)
+        if decision.rule == "system_canary_egress":
+            raise SystemPromptLeakageError(decision.rule, f"{enclave.value}: {decision.reason} via {call.tool}")
         return ToolResult(call_id=call.call_id, decision=decision, output=output,
                           label=label if decision.allowed else None)
 
@@ -338,6 +397,10 @@ class CapabilityBroker:
             if findings:
                 self.audit.write(self.session_id, AuditKind.EGRESS_ALERT, enclave=enclave.value, tool=tool.value,
                                  call_id=call.call_id, findings=[f.model_dump() for f in findings])
+            # Un canary de system prompt en un sumidero es una fuga confirmada: se bloquea antes de
+            # cualquier otra regla (aunque el token o el host también fallen) y `execute` lanza la excepción.
+            if any(finding.kind == "system" for finding in findings):
+                return self._deny("system_canary_egress", "system prompt canary in network sink")
         if tool not in ENCLAVE_TOOLS[enclave] or tool not in self._tools:
             return self._deny("tool_not_in_registry", f"{tool.value} is not registered for {enclave.value}")
         # 2. argumentos
@@ -364,13 +427,14 @@ class CapabilityBroker:
                 target = net_target(call.args["url"]) if tool is ToolName.FETCH_URL else search_target(call.args["query"])
             except UrlNotAllowed as exc:
                 return self._deny("host_not_allowed", str(exc))
+            self._last_target = target
             if not _scope_matches(target, token.scope):
                 return self._deny("token_scope_mismatch", "network target outside token scope")
             self._used.add(token.token_id)
             # 5. taint
             if self.config.taint and self._context[enclave] >= Label.L2:
                 return self._deny("taint_l2_to_network", "enclave context carries L2 data")
-            # 6. egreso
+            # 6. egreso (los canaries de system prompt ya se cortaron arriba)
             if findings:
                 return self._deny("egress_canary_detected", f"{len(findings)} canary finding(s)")
             return BrokerDecision(allowed=True, rule="allow"), (lambda: fn(**call.args)), Label.L0
@@ -380,6 +444,7 @@ class CapabilityBroker:
         except PathViolation as violation:
             return self._deny(violation.rule, violation.reason)
         operation = TOOL_OPERATION[tool]
+        self._last_target = relative
         if dir_label not in PATH_POLICY.get((enclave, operation), frozenset()):
             return self._deny("path_level_not_allowed",
                               f"{enclave.value} may not {operation.value} {dir_label.name}")

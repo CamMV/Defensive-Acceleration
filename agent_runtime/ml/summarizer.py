@@ -19,7 +19,7 @@ from typing import Optional, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..llm import BaseLLM, LLMError, dumps_schema
+from ..ml_d.llm import BaseLLM, LLMError, dumps_schema
 from .injection_signal import InjectionScorer
 
 MAX_SUMMARY_CHARS = 600

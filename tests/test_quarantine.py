@@ -10,7 +10,7 @@ import pytest
 
 from agent_runtime.broker import AuditLog
 from agent_runtime.contracts import AuditKind, ExtractedRecord, Label, TextField
-from agent_runtime.quarantine import (
+from agent_runtime.ml_d.quarantine import (
     ProvenanceVerifier, QuarantineAccessDenied, QuarantineError, QuarantineStore, amounts_in,
     contains_token, dates_in, defang, parse_amount,
 )

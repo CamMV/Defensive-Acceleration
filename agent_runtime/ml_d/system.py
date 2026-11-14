@@ -12,18 +12,18 @@ from typing import Optional
 
 import httpx
 
-from .broker import AuditLog, CapabilityBroker
-from .contracts import CONFIGS, ToolName
-from .enclaves.customs import CustomsEnclave
-from .enclaves.orchestrator import Orchestrator
-from .enclaves.planner import LLMPlanner, PlanValidator, RulePlanner
-from .enclaves.vault_worker import DriftCheck, VaultWorker
+from ..broker import AuditLog, CapabilityBroker
+from ..contracts import CONFIGS, ToolName
+from .customs import CustomsEnclave
+from .orchestrator import Orchestrator
+from .planner import LLMPlanner, PlanValidator, RulePlanner
+from .vault_worker import DriftCheck, VaultWorker
 from .llm import BaseLLM
-from .ml.summarizer import ExtractiveSummarizer, LLMSummarizer
-from .monitors.intent_drift import IntentDriftMonitor
+from ..ml.summarizer import ExtractiveSummarizer, LLMSummarizer
+from .intent_drift import IntentDriftMonitor
 from .quarantine import QuarantineStore
-from .tools import local_tools
-from .tools.web_tools import WebTools
+from ..tools import local_tools
+from ..tools.web_tools import WebTools
 
 
 @dataclass

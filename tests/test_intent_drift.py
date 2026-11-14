@@ -6,9 +6,9 @@ from pathlib import Path
 
 from agent_runtime.broker import AuditLog
 from agent_runtime.contracts import AuditKind
-from agent_runtime.llm import MockLLM
-from agent_runtime.monitors.intent_drift import IntentDriftMonitor, findings_for
-from agent_runtime.system import build_defended_system
+from agent_runtime.ml_d.llm import MockLLM
+from agent_runtime.ml_d.intent_drift import IntentDriftMonitor, findings_for
+from agent_runtime.ml_d.system import build_defended_system
 from eval.drift_eval import evaluate
 from test_server.app import create_app, inprocess_client
 

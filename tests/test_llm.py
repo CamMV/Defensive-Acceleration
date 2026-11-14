@@ -6,7 +6,7 @@ from typing import Literal
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from agent_runtime.llm import (
+from agent_runtime.ml_d.llm import (
     LLMError, LLMNotConfigured, MockLLM, extract_json_text, is_configured, load_env, make_llm,
 )
 

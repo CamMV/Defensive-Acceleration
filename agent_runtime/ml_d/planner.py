@@ -18,28 +18,28 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..broker import AuditLog
 from ..contracts import ActionType, AuditKind, EnclaveId, Plan, PlanStep
-from ..llm import BaseLLM, LLMError, dumps_schema
+from .llm import BaseLLM, LLMError, dumps_schema
 from ..ml.vectors import normalize_text
 from ..tools.web_tools import UrlNotAllowed, check_url
 
 BASE_URL = "http://127.0.0.1:8000"
-REPORT_PATH = "internal_workspace/reporte_auditoria.md"
+REPORT_PATH = "internal_workspace/acta_auditoria.md"
 MAX_STEPS = 8
 
 # Catálogo de metadatos (nombres, no contenido) que el Planner puede citar.
 VAULT_KEYWORDS: dict[str, str] = {
-    "contrato": "restricted_vault/contract_acme.md",
-    "contract": "restricted_vault/contract_acme.md",
-    "financ": "restricted_vault/financials_q3.csv",
-    "clientes": "restricted_vault/customers_pii.csv",
-    "customers": "restricted_vault/customers_pii.csv",
+    "contrato": "restricted_vault/contrato_obra_LP-2026-014.md",
+    "contract": "restricted_vault/contrato_obra_LP-2026-014.md",
+    "declaraciones": "restricted_vault/declaraciones_renta_2025.csv",
+    "expediente": "restricted_vault/expediente_fiscal_cc_1032.csv",
+    "nomina": "restricted_vault/nomina_auditores_reservada.csv",
 }
 
 _URL = re.compile(r"(?:http://127\.0\.0\.1:8000)?(/(?:docs-[a-z][a-z-]*|invoice/\d{1,8})(?:\?[\w=&-]+)?)")
 _INVOICE = re.compile(r"\b(?:factura|invoice)\s+(?:n[oº°.]*\s*)?#?(\d{3,8})\b", re.IGNORECASE)
 _INBOX = re.compile(r"\buntrusted_inbox/[\w.\-]+\b")
 _QUOTED = re.compile(r"[\"“']([^\"”']{3,80})[\"”']")
-_REPORT_VERB = re.compile(r"\b(reporte|report|informe)\b", re.IGNORECASE)
+_REPORT_VERB = re.compile(r"\b(reporte|report|informe|acta)\b", re.IGNORECASE)
 _SEARCH_VERB = re.compile(r"\b(busca|buscar|search)\b", re.IGNORECASE)
 _CODE_VERB = re.compile(r"\b(actualiza|actualizar|update|parchea|patch|corrige|fix|cambia|change)\b", re.IGNORECASE)
 _CODE_FILE = re.compile(r"\b(?:internal_workspace/)?([\w\-]+\.py)\b")

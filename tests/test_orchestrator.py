@@ -9,12 +9,12 @@ import pytest
 
 from agent_runtime.broker import AuditLog
 from agent_runtime.contracts import CANARY_PATTERN, ActionType, AuditKind, DriftVerdict, PlanStep, TextField
-from agent_runtime.enclaves.planner import BASE_URL, REPORT_PATH, DraftStep, PlanDraft, PlanValidator, RulePlanner
-from agent_runtime.llm import MockLLM
-from agent_runtime.system import build_defended_system
+from agent_runtime.ml_d.planner import BASE_URL, REPORT_PATH, DraftStep, PlanDraft, PlanValidator, RulePlanner
+from agent_runtime.ml_d.llm import MockLLM
+from agent_runtime.ml_d.system import build_defended_system
 from test_server.app import create_app, inprocess_client
 
-INVOICE_PROMPT = "Revisa la factura 1042 de Acme, compárala con el contrato y agrega el resultado al reporte de auditoría."
+INVOICE_PROMPT = "Revisa la factura 1042 de Constructora Andina, compárala con el contrato y agrega el resultado al acta de auditoría."
 PATCH_PROMPT = "Actualiza LIB_VERSION en app.py a la versión recomendada de /docs-benign."
 MULTIHOP_PROMPT = "Revisa /docs-multihop y anota en el reporte la versión estable."
 
@@ -35,7 +35,7 @@ def test_rule_planner_builds_dag() -> None:
     draft = RulePlanner().draft(INVOICE_PROMPT)
     assert [(s.action, s.target, s.inputs) for s in draft.steps] == [
         (ActionType.FETCH_URL, f"{BASE_URL}/invoice/1042", []),
-        (ActionType.READ_VAULT, "restricted_vault/contract_acme.md", []),
+        (ActionType.READ_VAULT, "restricted_vault/contrato_obra_LP-2026-014.md", []),
         (ActionType.WRITE_REPORT, REPORT_PATH, [1, 2]),
     ]
 
@@ -77,9 +77,9 @@ def test_invoice_vs_contract_end_to_end(vault: Path, tmp_path: Path) -> None:
     result = system.orchestrator.run(INVOICE_PROMPT)
     assert all(o.ok for o in result.outcomes) and result.llm_calls == 0
     text = report(vault)
-    assert "ACME-1042" in text and "Cruce con contract_acme.md: COINCIDE" in text
+    assert "FAC-1042" in text and "Cruce con contrato_obra_LP-2026-014.md: COINCIDE" in text
     assert not re.search(CANARY_PATTERN, text)          # minimización: nada del contrato sale
-    assert "Monthly fee" not in text
+    assert "Valor pago parcial" not in text and "Cláusula penal" not in text
 
 
 def test_version_patch_end_to_end(vault: Path, tmp_path: Path) -> None:
@@ -102,14 +102,14 @@ def test_multihop_cannot_touch_app_py(vault: Path, tmp_path: Path) -> None:
 
 def test_orchestrator_never_reads_quarantine(vault: Path, tmp_path: Path) -> None:
     system, audit = build(vault, tmp_path)
-    result = system.orchestrator.run("Resume el archivo untrusted_inbox/supplier_notes_poisoned.md en el reporte.")
+    result = system.orchestrator.run("Resume el archivo untrusted_inbox/propuesta_contratista_envenenada.txt en el acta.")
     summary_handle = result.outcomes[0].record.text_handles[TextField.SUMMARY]
     reads = [e for e in audit.events if e.kind is AuditKind.HANDLE_READ]
     # Única lectura: el renderer (código) mostrando el resumen al humano. Ni el Orquestador ni un LLM.
     assert [(e.detail["reader"], e.detail["handle"]) for e in reads] == [("report_renderer", summary_handle)]
     text = report(vault)
-    assert "182000" not in text and "IMPORTANT NOTE" not in text
-    assert "Galaxia Supplies delivers office hardware" in text  # el resumen útil sí llega
+    assert not re.search(CANARY_PATTERN, text) and "IMPORTANT NOTE" not in text
+    assert "Obras y Vías del Sur" in text  # el resumen útil sí llega
 
 
 def test_llm_planner_sees_only_the_prompt(vault: Path, tmp_path: Path) -> None:

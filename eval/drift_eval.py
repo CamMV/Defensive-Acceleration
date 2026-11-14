@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from agent_runtime.monitors.intent_drift import IntentDriftMonitor
+from agent_runtime.ml_d.intent_drift import IntentDriftMonitor
 
 CASES = Path(__file__).with_name("drift_cases.yaml")
 
